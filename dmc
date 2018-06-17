@@ -1,0 +1,922 @@
+#!/bin/bash
+# BSD 3-Clause License
+# 
+# Copyright (c) 2018, Sébastien Huss
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+# 
+# * Redistributions of source code must retain the above copyright notice, this
+#   list of conditions and the following disclaimer.
+# 
+# * Redistributions in binary form must reproduce the above copyright notice,
+#   this list of conditions and the following disclaimer in the documentation
+#   and/or other materials provided with the distribution.
+# 
+# * Neither the name of the copyright holder nor the names of its
+#   contributors may be used to endorse or promote products derived from
+#   this software without specific prior written permission.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+# AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+# SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+# CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+# OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+##############################################################################
+### Configure bashlibs
+##
+ARGS_info="dmc: Debian Micro Container images creator"
+BASE_dir=${BASE_dir:-"$(cd "$(dirname $0)";pwd)"}
+CONF_dir=${CONF_dir:-"$BASE_dir/conf"}
+CFG_file=${CFG_file:-"$CONF_dir/dmc.conf"}
+OUT_level=${OUT_level:-ALL}
+LOG_level=${LOG_level:-NONE}
+SHLIBDIR=${SHLIBDIR:-"${BASE_dir}/bashlibs"}
+. $SHLIBDIR/core.lib.bash
+. $SHLIBDIR/task.lib.bash
+. $SHLIBDIR/kube.lib.bash
+OUT_color[$(out.levelID STDERR)]=""
+TEMPLATE_dir=${TEMPLATE_dir:-"$BASE_dir/templates"}
+##############################################################################
+### Read the config
+##
+ARCHS=${ARCHS:-"$(cfg.get ARCHS)"};		ARCHS=${ARCHS:-"amd64,arm64"}
+DIST=${DIST:-"$(cfg.get DIST)"};		DIST=${DIST:-"buster"}
+MIRROR=${MIRROR:-"$(cfg.get MIRROR)"};		MIRROR=${MIRROR:-"http://ftp.fr.debian.org/debian"}
+SOURCEDIR=${SOURCEDIR:-"$(cfg.get SOURCEDIR)"};	SOURCEDIR=${SOURCEDIR:-"$BASE_dir/sources"}
+ROOTDIR=${ROOTDIR:-"$(cfg.get ROOTDIR)"};	ROOTDIR=${ROOTDIR:-"$BASE_dir/rootfs"}
+BUILDDIR=${BUILDDIR:-"$(cfg.get BUILDDIR)"};	BUILDDIR=${BUILDDIR:-"$BASE_dir/builds"}
+IMAGEDIR=${IMAGEDIR:-"$(cfg.get IMAGEDIR)"};	IMAGEDIR=${IMAGEDIR:-"$BASE_dir/images"}
+DOCKERHOST=${DOCKERHOST:-"$(cfg.get DOCKERHOST)"};
+DOCKERARCH=( $(sed 's/,/ /g' <<<${DOCKERARCH:-$(cfg.get DOCKERARCH)}) );
+MASTER=${MASTER:-"$(cfg.get MASTER)"};
+REPODOCKER=${REPODOCKER:-"$(cfg.get REPODOCKER)"};REPODOCKER=${REPODOCKER:-"http://localhost:5000"}
+
+##############################################################################
+### Arguments management
+##
+TMPTS=()
+args.declare ARCHS	-A --archs  Vals NoOption NotMandatory   "Architectures to build for	(DEFAULT: $ARCHS)"
+args.declare DIST	-D --dist   Vals NoOption NotMandatory   "Debian disribution		(DEFAULT: $DIST)"
+args.declare MIRROR	-M --mirror Vals NoOption NotMandatory   "Debian mirror		(DEFAULT: $MIRROR)"
+args.declare DOCKERHOST	-H --host   Vals NoOption NotMandatory   "Docker hostname		(DEFAULT: $DOCKERHOST)"
+args.declare TOOLS    -T --tools  NoVals NoOption NotMandatory   "Add some debuging tools to the image (not for production)"
+args.declare DELETE   -X --delete NoVals NoOption NotMandatory   "Remove from kubernetes"
+args.option.declare TMPTS  -t --templates	  NotMandatory N "A coma-separated list of templates"
+args.option.declare GROUP  -g --groups		  NotMandatory N "A coma-separated list of template groups"
+
+ACT=${ACT:-"create"}
+args.pre() {
+	local i v=$1;shift
+	for (( i=0; i<${#ARGS_vars[@]}; i++ ));do
+		if [[ ${ARGS_vars[$i]} == "ACT" ]];then
+			ARGS_mandatory[$i]="N"
+		fi
+	done
+}
+args.post() {
+	ARCHS=($(sed 's/,/ /g'<<<$ARCHS))
+}
+
+##############################################################################
+### Templates
+##
+templates.list() {
+	local f i
+	[ $(ls -1a "$TEMPLATE_dir/"*sh 2>/dev/null|wc -l) -lt 1 ] && return 0
+	for i in "$TEMPLATE_dir/"*sh;do f=${i##*/};echo ${f%.sh}; done
+}
+templates.load() {
+	[ ! -f "${TEMPLATE_dir}/${1}.sh" ] && return 1
+	TMPLT=$1
+	. "${TEMPLATE_dir}/${1}.sh"
+	return 0
+}
+templates.load.list() {
+	local i r=0
+	if [[ "$TMPTS" = "$1" ]];then
+		:
+	elif [ ${#TMPTS[@]} -ne 0 ];then
+		out.error "A template list have already been loaded"
+		return 2
+	fi
+	TMPTS=( $(sed 's/,/ /g'<<<$1) )
+	for (( i=0; i<${#TMPTS[@]}; i++ ));do
+		if ! templates.load "${TMPTS[$i]}";then
+			out.error "Template ${TMPTS[$i]} not found"
+			r=1
+		fi
+	done
+	return $r
+}
+for tmp in $(templates.list);do 
+	args.option TMPTS "$tmp" "$(awk '/^#@DESC@/{gsub("#@DESC@[ ]*","");print}' <$TEMPLATE_dir/${tmp}.sh)"
+done
+args.callback TMPTS templates.load.list
+
+##############################################################################
+### Groups
+##
+groups.list() {
+	[ $(ls -1a "$TEMPLATE_dir/"*sh 2>/dev/null|wc -l) -lt 1 ] && return 0
+	cat "$TEMPLATE_dir/"*sh|awk '$1=="#@GROUP@"{print $2}'|sort -u
+}
+groups.templates() {
+	[ $(ls -1a "$TEMPLATE_dir/"*sh 2>/dev/null|wc -l) -lt 1 ] && return 0
+	egrep -H "^#@GROUP@" "$TEMPLATE_dir/"*sh|awk -vG=$1 '$2==G{gsub(".sh.*","");gsub(".*/","");print}'
+}
+groups.load() {
+	local i g t x j
+	t=()
+	g=( $(sed 's/,/ /g'<<<$1) )
+	if [ ${#g[@]} -eq 0 ];then
+		out.error "GROUP cannot be empty"
+		return 1
+	fi
+	for (( i=0; i<${#g[@]}; i++ ));do
+		x=( $(groups.templates ${g[$i]}) )
+		for (( j=0; j<${#x[@]}; j++ ));do
+			array.have "${x[j]}" "${t[@]}" || t+=("${x[j]}")
+		done
+	done
+	templates.load.list "${t[*]}"
+}
+for tmp in $(groups.list);do 
+	args.option GROUP "$tmp" "$tmp"
+done
+args.callback GROUP groups.load
+
+##############################################################################
+### utilitaires divers
+##
+is.root() {
+	[ $(id -u) -eq 0 ]
+}
+precheck.root() {
+	if ! is.root;then
+		out.error "> You have to be *root* to run this <"
+		return 1
+	fi
+}
+
+
+##############################################################################
+### rootfs management
+##
+rootfs.prepare() {
+	ARCH=$1
+	local a=$1
+	case $ARCH in
+	armhf) a=arm;;
+	arm64) a=aarch64;;
+	amd64) a=x86_64;;
+	esac
+	out.cmd cp /usr/bin/qemu-${a}-static "$ROOTDIR/$ARCH/usr/bin/"
+	out.cmd cp /etc/resolv.conf "$ROOTDIR/$ARCH/etc/resolv.conf"
+	out.cmd chown root:root "$ROOTDIR/$ARCH/tmp"
+	out.cmd chmod 1777 "$ROOTDIR/$ARCH/tmp"
+	cat >"$ROOTDIR/$ARCH/etc/apt/sources.list"<<ENDF
+deb $MIRROR $DIST main contrib non-free
+deb-src $MIRROR $DIST main contrib non-free
+ENDF
+}
+rootfs.fix() {
+	ARCH=$1
+	local la pc d pref=""
+	case $ARCH in
+	arm64)	pref="aarch64-linux-gnu";;
+	armhf)	pref="arm-linux-gnueabihf";;
+	amd64)	pref="x86_64-linux-gnu";;
+	i386)	pref="i386-linux-gnu";;
+	esac
+	for la in $(find $ROOTDIR/$ARCH -type f -name '*.la');do
+		sed -i "s#libdir='/usr/lib#libdir='$ROOTDIR/$ARCH/usr/lib#g" $la
+	done
+	for d in $(find $ROOTDIR/$ARCH -name pkgconfig -type d);do
+		for pc in $(find $d -name '*pc');do
+			sed -i "s#prefix=/usr\$#prefix=$ROOTDIR/$ARCH/usr#g;s#libdir=/usr/lib#libdir=$ROOTDIR/$ARCH/usr/lib#g;s#includedir=/usr/include#includedir=$ROOTDIR/$ARCH/usr/include#g" $pc
+		done
+	done
+	mkdir -p $ROOTDIR/$ARCH/scripts
+	for f in $(find $ROOTDIR/$ARCH/usr/bin -type f -name "*-config");do 
+		if file $f|grep -q shell;then 
+			cp -f $f $ROOTDIR/$ARCH/scripts
+			sed -i "s#prefix=/usr\$#prefix=$ROOTDIR/$ARCH/usr#g;s#libdir=/usr/lib#libdir=$ROOTDIR/$ARCH/usr/lib#g;s#includedir=/usr/include#includedir=$ROOTDIR/$ARCH/usr/include#g" "$ROOTDIR/$ARCH/scripts/$(basename $f)"
+		fi
+	done
+	for f in $ROOTDIR/$ARCH/etc/alternatives/lib*;do
+		[ ! -e $f ] && ln -sf "../..$(readlink $f)" "$f"
+	done
+	[ -z "$pref" ] && return 0
+	for f in $(find $ROOTDIR/$ARCH/usr/lib/$pref -type l);do 
+		[ ! -e $f ] && ln -sf "../../..$(readlink $f)" "$f"
+	done
+	for f in $ROOTDIR/$ARCH/usr/lib/$pref/lib*so;do 
+		if [ -h $f ] && [ ! -h $ROOTDIR/$ARCH/usr/lib/$(basename $f) ] ;then 
+			l=$(readlink $f)
+			if [[ "$(basename $l)" == "$l" ]];then 
+				ln -sf "$pref/$l" "$ROOTDIR/$ARCH/usr/lib/$(basename $f)"
+			elif [[ "$l" = ../* ]];then
+				ln -sf "$(echo $l|sed 's#^../##')" "$ROOTDIR/$ARCH/usr/lib/$(basename $f)"
+			fi
+		fi
+	done
+}
+rootfs.mount() {
+	ARCH=$1;shift
+	if awk -v D="$ROOTDIR/$ARCH$1" 'BEGIN{R=1}$2==D{R=0}END{exit R}'</etc/mtab;then
+		out.info "$1 already mounted, skipping"
+	else
+		out.cmd mount --bind "$1" "$ROOTDIR/$ARCH$1"
+	fi
+}
+rootfs.umount() {
+	ARCH=$1;shift
+	if awk -v D="$ROOTDIR/$ARCH$1" 'BEGIN{R=1}$2==D{R=0}END{exit R}'</etc/mtab;then
+		out.cmd umount "$ROOTDIR/$ARCH$1"
+	fi
+}
+rootfs.cmd() {
+	ARCH=$1;shift
+	unset LD_PRELOAD;export LANG=C;
+	out.cmd chroot "$ROOTDIR/$ARCH" "$@"
+}
+rootfs.cmd.bare() {
+	ARCH=$1;shift
+	unset LD_PRELOAD;export LANG=C;
+	chroot "$ROOTDIR/$ARCH" "$@"
+}
+rootfs.cmd.full() {
+	ARCH=$1;shift
+	unset LD_PRELOAD;export LANG=C;
+	rootfs.mount "$ARCH" /dev
+	rootfs.mount "$ARCH" /dev/pts
+	rootfs.mount "$ARCH" /proc
+	out.cmd chroot "$ROOTDIR/$ARCH" "$@"
+	rootfs.umount "$ARCH" /proc
+	rootfs.umount "$ARCH" /dev/pts
+	rootfs.umount "$ARCH" /dev
+}
+rootfs.install() {
+	ARCH=$1;shift
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	rootfs.cmd.full "$ARCH" apt-get -y install "$@"
+	}
+}
+rootfs.build-dep() {
+	ARCH=$1;shift
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	rootfs.cmd.full "$ARCH" apt-get -y build-dep "$@"
+	}
+}
+rootfs.update() {
+	ARCH=$1;shift
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	rootfs.cmd.full "$ARCH" apt-get update
+	}
+}
+rootfs.upgrade() {
+	ARCH=$1;shift
+	rootfs.mount "$ARCH" /dev
+	rootfs.mount "$ARCH" /dev/pts
+	rootfs.mount "$ARCH" /proc
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	rootfs.cmd "$ARCH" apt-get update
+	rootfs.cmd "$ARCH" apt-get -y upgrade
+	rootfs.cmd "$ARCH" apt-get -y autoclean
+	}
+	rootfs.umount "$ARCH" /proc
+	rootfs.umount "$ARCH" /dev/pts
+	rootfs.umount "$ARCH" /dev
+}
+rootfs.addkey() {
+	ARCH=$1;shift
+	{
+	export APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=yes #disable the "Warning: apt-key output should not be parsed (stdout is not a terminal)" message
+	rootfs.cmd "$ARCH" apt-key add -
+	}
+}
+
+update() {
+	local i
+	for (( i=0; i<${#ARCHS[@]}; i++ ));do
+		eval "rootfs.fix.${ARCHS[$i]}() { rootfs.fix \"${ARCHS[$i]}\"; }"
+		eval "rootfs.upgrade.${ARCHS[$i]}() { rootfs.upgrade \"${ARCHS[$i]}\"; }"
+		task.add rootfs.upgrade.${ARCHS[$i]}  "Upgrade ${ARCHS[$i]} rootfs to the lastest version"
+		task.add rootfs.fix.${ARCHS[$i]}      "Prepare ${ARCHS[$i]} rootfs for cross-compilation"
+	done
+}
+act.add update "Update the rootfs"
+
+##############################################################################
+### setup
+##
+
+setup.install() {
+	export DEBIAN_FRONTEND=noninteractive
+	local c="" i
+	for (( i=0; i<${#ARCHS[@]}; i++ ));do
+		if [ "${ARCHS[$i]}"  = "$(dpkg-architecture |awk -F= '$1=="DEB_HOST_ARCH"{print $2}')" ];then
+			c="$c build-essential"
+		else
+			c="$c crossbuild-essential-${ARCHS[$i]}"
+		fi
+	done
+	out.cmd apt-get -y install debootstrap qemu binfmt-support qemu-user-static curl $c
+}
+setup.dirs() {
+	local i
+	mkdir -p "$SOURCEDIR" "$BUILDDIR"
+	for (( i=0; i<${#ARCHS[@]}; i++ ));do
+		mkdir -p "$ROOTDIR/${ARCHS[$i]}" "$IMAGEDIR/${ARCHS[$i]}" 
+	done
+}
+setup.bootstrap() {
+	ARCH=$1
+	if [ -f "$ROOTDIR/$ARCH/var/lib/dpkg/status" ];then
+		if [ $(grep -c "Package: apt" "$ROOTDIR/$ARCH/var/lib/dpkg/status") -lt 1 ];then
+			out.error "A dpkg status file was found but it dont have apt installed"
+			out.error "You should probably flush that directory ($ROOTDIR/$ARCH) and retry"
+			return 1
+		fi
+		if [ $(grep Status "$ROOTDIR/$ARCH/var/lib/dpkg/status"|sort -u|wc -l) -ne 1 ];then
+			out.error "There are some invalid dpkg status ($ROOTDIR/$ARCH)"
+			return 2
+		fi
+		out.info "The existing rootfs looks sane"
+		return 0
+		
+	fi
+	mkdir -p "$ROOTDIR/$ARCH/etc/apt/apt.conf.d/" "$ROOTDIR/$ARCH/etc/dpkg/dpkg.cfg.d/"
+	cat>"$ROOTDIR/$ARCH/etc/apt/apt.conf.d/builds" <<ENDCFG
+Dir::Cache::pkgcache "";
+Dir::Cache::srcpkgcache "";
+Acquire::Languages "none";
+Acquire::GzipIndexes "true";
+Acquire::CompressionTypes::Order:: "gz";
+Apt::AutoRemove::SuggestsImportant "false";
+APT::Install-Recommends "0" ; 
+APT::Install-Suggests "0" ;
+ENDCFG
+	cat>"$ROOTDIR/$ARCH/etc/dpkg/dpkg.cfg.d/builds" <<ENDCFG
+path-exclude=/usr/share/locale/*
+path-exclude=/usr/share/info/*
+path-exclude=/usr/share/man/*
+path-exclude=/usr/share/doc/*
+ENDCFG
+	out.cmd debootstrap --variant=minbase --arch "$ARCH" "$DIST" "$ROOTDIR/$ARCH" "$MIRROR"
+}
+
+setup() {
+	local i
+	task.add precheck.root			"Verify that we're running as root"
+	task.add setup.install			"Install all the base packages"
+	task.add setup.dirs			"Create the directories"
+	for (( i=0; i<${#ARCHS[@]}; i++ ));do
+		eval "setup.bootstrap.${ARCHS[$i]}() { setup.bootstrap \"${ARCHS[$i]}\"; }"
+		eval "rootfs.prepare.${ARCHS[$i]}() { rootfs.prepare \"${ARCHS[$i]}\"; }"
+		eval "rootfs.fix.${ARCHS[$i]}() { rootfs.fix \"${ARCHS[$i]}\"; }"
+		eval "rootfs.upgrade.${ARCHS[$i]}() { rootfs.upgrade \"${ARCHS[$i]}\"; }"
+		task.add setup.bootstrap.${ARCHS[$i]} "Bootstrap the ${ARCHS[$i]} rootfs"
+		task.add rootfs.prepare.${ARCHS[$i]}  "Prepare ${ARCHS[$i]} rootfs for chroot"
+		task.add rootfs.upgrade.${ARCHS[$i]}  "Upgrade ${ARCHS[$i]} rootfs to the lastest version"
+		task.add rootfs.fix.${ARCHS[$i]}      "Prepare ${ARCHS[$i]} rootfs for cross-compilation"
+	done
+}
+act.add setup "Setup the builds environnements"
+
+##############################################################################
+### Helper functions for templates
+##
+
+source.apt() {
+	mkdir -p "$DIR_SOURCE"
+	cd "$DIR_SOURCE"
+	LANG=C apt-get source "$1"
+	ln -sf "$(ls -1td "$1"*|awk '!/dsc$/&&!/\.tar\...$/'|head -1)" "$1"
+}
+source.git(){
+	if [ -d "$DIR_SOURCE/$1/.git" ];then
+		cd  "$DIR_SOURCE/$1"
+		git pull
+	else
+		mkdir -p "$DIR_SOURCE"
+		cd  "$DIR_SOURCE"
+		git clone "$2" "$1"
+	fi
+}
+source.file() {
+	mkdir -p "$DIR_SOURCE"
+	if [ ! -f "$DIR_SOURCE/$1" ];then
+		curl -sL "$2">"$DIR_SOURCE/$1"
+	fi
+	mkdir -p "$DIR_SOURCE/${1%%\.*}"
+	tar -C "$DIR_SOURCE/${1%%\.*}" --strip-components=1 -xf "$DIR_SOURCE/$1"
+}
+source.github() {
+	local tar=$(curl -sL "https://api.github.com/repos/$2/releases/latest"|awk '$1~/tarball_url/{sub(/",$/,"",$2);sub(/^"/,"",$2);print $2}')
+	if [ -z "$tar" ];then
+		out.error Tarball not found
+		return 1
+	fi
+	#local ver=${tar##*/}
+	mkdir -p "$DIR_SOURCE/$1"
+	curl -sL "$tar"| tar -xz -C "$DIR_SOURCE/$1" --strip-components=1
+}
+prepare.dir() {
+	mkdir -p "$DIR_BUILD/$1"
+}
+prepare.get.packages() {
+	mkdir -p "$ROOTDIR/$ARCH/target"
+	mount --bind "$DIR_BUILD" "$ROOTDIR/$ARCH/target"
+	echo  "cd /target;apt-get download $@"| rootfs.cmd.bare "$ARCH"
+	umount "$ROOTDIR/$ARCH/target"
+}
+set.env() {
+	local pref=""
+	case $ARCH in
+	arm64)	TARGET_SYS="aarch64-linux-gnu";;
+	armhf)	TARGET_SYS="arm-linux-gnueabihf";;
+	amd64)	TARGET_SYS="x86_64-linux-gnu";;
+	i386)	TARGET_SYS="i386-linux-gnu";;
+	*)	out.error "Unknown architecture $ARCH";return 1;;
+	esac
+	export TOOLCHAIN_ROOT="$ROOTDIR/$ARCH"
+	#export CMAKETOOLCHAINFILE="$TOOLCHAIN_ROOT/toolchain.cmake"
+	export TARGET_SYS
+	export CXXFLAGS="$CXX_DEFINES --sysroot=$TOOLCHAIN_ROOT $CXXFLAGS_ADD -I$TOOLCHAIN_ROOT/usr/include"
+	export CPPFLAGS="$CXXFLAGS" CFLAGS="$CXXFLAGS"
+	export CROSSTOOL="$TARGET_SYS"
+	export CXX=$CROSSTOOL-g++ CC=$CROSSTOOL-gcc AR=$CROSSTOOL-ar AS=$CROSSTOOL-as RANLIB=$CROSSTOOL-ranlib STRIP=$CROSSTOOL-strip
+	export LDFLAGS="--sysroot=$TOOLCHAIN_ROOT -L$TOOLCHAIN_ROOT/usr/lib -Wl,-rpath,$TOOLCHAIN_ROOT/usr/lib -L$TOOLCHAIN_ROOT/lib/$TARGET_SYS -Wl,-rpath,$TOOLCHAIN_ROOT/lib/$TARGET_SYS -L$TOOLCHAIN_ROOT/usr/lib/$TARGET_SYS -Wl,-rpath,$TOOLCHAIN_ROOT/usr/lib/$TARGET_SYS"
+
+	export LIBTOOL_SYSROOT_PATH=$TOOLCHAIN_ROOT
+	export PKG_CONFIG_SYSROOT_DIR=$TOOLCHAIN_ROOT
+	export PKG_CONFIG_PATH=$TOOLCHAIN_ROOT/usr/lib/pkgconfig
+	export CPATH="$TOOLCHAIN_ROOT/usr/include:$CPATH" 
+	export PATH="$TOOLCHAIN_ROOT/scripts:$PATH"
+	export HOST_CC=gcc HOST_CXX=g++
+	export LD_LIBRARY_PATH="$TOOLCHAIN_ROOT/usr/lib:$TOOLCHAIN_ROOT/usr/lib/$TARGET_SYS:$TOOLCHAIN_ROOT/lib:$LD_LIBRARY_PATH"
+}
+set.vars() {
+	ARCH=$1
+	TMPLT=$2
+	DIR_SOURCE="$SOURCEDIR/$TMPLT"
+	DIR_BUILD="$BUILDDIR/$TMPLT/$ARCH"
+	DIR_DEST="$IMAGEDIR/$ARCH/$TMPLT"
+}
+configure.autoconf() {
+	cd "$DIR_BUILD/$1"
+	shift
+	./configure --host=$TARGET_SYS "$@"
+}
+build.make() {
+	cd "$DIR_BUILD/$1";make -j 4
+}
+build.copy.source() {
+	mkdir -p "$DIR_BUILD/$1"
+	rm -rf "$DIR_BUILD/$1/"*
+	cp -Rapf "$DIR_SOURCE/$1/"* "$DIR_BUILD/$1"
+}
+
+install.make() {
+	mkdir -p "$DIR_DEST"
+	cd "$DIR_BUILD/$1";make DESTDIR="$DIR_DEST" prefix=/usr install
+}
+install.container() {
+	mkdir -p "$DIR_DEST"
+	if [ ! -f "$IMAGEDIR/$ARCH/$1.tar.gz" ];then
+		out.error "$1:$ARCH container not found"
+		return 1
+	fi
+	tar xf "$IMAGEDIR/$ARCH/$1.tar.gz" -C "$DIR_DEST"
+}
+install.init() {
+	mkdir -p "$DIR_DEST"
+	rm -rf "$DIR_DEST/"*
+	mkdir -p "$DIR_DEST/etc" "$DIR_DEST/tmp" "$DIR_DEST/var/tmp" "$DIR_DEST/start.d"
+	chmod 777 "$DIR_DEST/tmp" "$DIR_DEST/var/tmp"
+	cp "$ROOTDIR/$ARCH/etc/passwd" "$ROOTDIR/$ARCH/etc/nsswitch.conf" "$ROOTDIR/$ARCH/etc/group" "$IMAGEDIR/$ARCH/$TMPLT/etc/"
+}
+install.libc() {
+	mkdir -p "$DIR_DEST"
+	local TARGET_SYS
+	case $ARCH in
+	arm64)	TARGET_SYS="aarch64-linux-gnu";;
+	armhf)	TARGET_SYS="arm-linux-gnueabihf";;
+	amd64)	TARGET_SYS="x86_64-linux-gnu";;
+	i386)	TARGET_SYS="i386-linux-gnu";;
+	*)	out.error "Unknown architecture $ARCH";return 1;;
+	esac
+	mkdir -p "$DIR_DEST/lib/$TARGET_SYS"
+	cp -Rapf $ROOTDIR/$ARCH/lib/$TARGET_SYS/* "$DIR_DEST/lib/$TARGET_SYS"
+	cp -Rapf $ROOTDIR/$ARCH/lib/*.so.* "$DIR_DEST/lib"
+	for i in $(find $DIR_DEST/lib/$TARGET_SYS -name '*.so*');do 
+		[ -h $i ] && continue
+		${TARGET_SYS}-strip $i
+	done
+}
+install.lib.missing() {
+	local i f NEED BIN EXIST ERR=0 INSTALL=1
+	while [ $ERR -eq 0 ] && [ ${INSTALL} -gt 0 ];do
+		BIN=($(find $DIR_DEST -type f -executable;for d in $(find $DIR_DEST -type d -name 'lib');do find $d -type f -name '*.so*';done) )
+		NEED=($(for i in ${BIN[@]};do file "$i"|grep -q "ELF" || continue;${TARGET_SYS}-objdump -x $i|awk '$1=="NEEDED"{print $2}';done|sort -u) )
+		EXIST=($(for d in $(find $DIR_DEST -type d -name 'lib');do find $d -name '*.so*' ;done|sed 's#.*/##'|sort -u) )
+		INSTALL=0
+		for (( i=0; i<${#NEED[@]}; i++ ));do if [[ "${EXIST[@]}" = "${EXIST[@]/${NEED[$i]}/}" ]];then 
+			# all missing libs
+			f=$(find $ROOTDIR/$ARCH -name "${NEED[$i]}"|head -1)
+			if [ -z "$f" ];then
+				out.notice "${NEED[$i]} is not found in the root FS, something is wrong"
+				ERR=1
+			else
+				out.info "Installing the missing ${NEED[$i]}"
+				cp "$f" $DIR_DEST/usr/lib
+				INSTALL=1
+			fi
+		fi;done
+	done
+	return $ERR
+}
+install.packages() {
+	local i
+	for i in "$DIR_BUILD/"*.deb;do
+		out.cmd dpkg -x "$i" "$DIR_DEST"
+	done
+}
+install.binaries() {
+	local bin
+	while [ $# -gt 0 ];do
+		bin=$1;shift
+		mkdir -p "$DIR_DEST$(dirname $bin)"
+		out.cmd cp "$ROOTDIR/$ARCH$bin" "$DIR_DEST$bin"
+	done
+}
+install.tools() {
+	install.binaries "/usr/bin/test" "/bin/cat" "/bin/sed" "/bin/hostname" "/bin/chown" "/bin/mkdir" "/bin/chmod" "/usr/bin/awk" "/sbin/ifconfig" "/bin/netstat" "/bin/ps" "/usr/bin/host" "/bin/cp" "/bin/df" "/bin/ip" "/bin/kill" "/bin/ls" "/sbin/ip" "/usr/bin/head" "/usr/bin/tail" "/usr/bin/" "/usr/bin/" "/usr/bin/" "/usr/bin/"
+}
+install.entrypoint() {
+	install.binaries "/bin/bash"
+	cat>"$DIR_DEST/start"<<ENDSTART
+#!/bin/bash
+SCRIPT_DIR=/start.d
+if [ -f \$SCRIPT_DIR/\$1 ];then
+	. \$SCRIPT_DIR/\$1
+elif [ \$# -gt 0 ];then
+	exec "\$@"
+elif [ ! -z "\$(ls -A \$SCRIPT_DIR)" ]; then
+	for i in \$SCRIPT_DIR/*;do
+		. \$i
+	done
+else
+	echo "The script dir is empty and no argument specified, nothing to start here"
+	echo "ARGS are [ \$@ ]"
+	env
+fi
+ENDSTART
+	chmod 755 "$DIR_DEST/start"
+	mkdir -p "$DIR_DEST/start.d"
+}
+install.bootstrap() {
+	local dist=${1:-$DIST}
+	if [ -f "$DIR_DEST/var/lib/dpkg/status" ];then
+		if [ $(grep -c "Package: apt" "$DIR_DEST/var/lib/dpkg/status") -lt 1 ];then
+			out.error "A dpkg status file was found but it dont have apt installed"
+			out.error "You should probably flush that directory ($DIR_DEST) and retry"
+			return 1
+		fi
+		if [ $(grep Status "$DIR_DEST/var/lib/dpkg/status"|sort -u|wc -l) -ne 1 ];then
+			out.error "There are some invalid dpkg status ($DIR_DEST)"
+			return 2
+		fi
+		out.info "The existing rootfs looks sane"
+		return 0
+		
+	fi
+	mkdir -p "$DIR_DEST/etc/apt/apt.conf.d/" "$DIR_DEST/etc/dpkg/dpkg.cfg.d/"
+	cat>"$DIR_DEST/etc/apt/apt.conf.d/builds" <<ENDCFG
+Dir::Cache::pkgcache "";
+Dir::Cache::srcpkgcache "";
+Acquire::Languages "none";
+Acquire::GzipIndexes "true";
+Acquire::CompressionTypes::Order:: "gz";
+Apt::AutoRemove::SuggestsImportant "false";
+APT::Install-Recommends "0" ; 
+APT::Install-Suggests "0" ;
+ENDCFG
+	cat>"$DIR_DEST/etc/dpkg/dpkg.cfg.d/builds" <<ENDCFG
+path-exclude=/usr/share/locale/*
+path-exclude=/usr/share/info/*
+path-exclude=/usr/share/man/*
+path-exclude=/usr/share/doc/*
+ENDCFG
+	out.cmd debootstrap --variant=minbase --arch "$ARCH" "$dist" "$DIR_DEST" "$MIRROR"
+	
+}
+install.cmd() {
+	unset LD_PRELOAD;export LANG=C;
+	out.cmd chroot "$DIR_DEST" "$@"
+}
+install.mount() {
+	if awk -v D="$DIR_DEST$1" 'BEGIN{R=1}$2==D{R=0}END{exit R}'</etc/mtab;then
+		out.info "$1 already mounted, skipping"
+	else
+		out.cmd mount --bind "$1" "$DIR_DEST$1"
+	fi
+}
+install.umount() {
+	if awk -v D="$DIR_DEST$1" 'BEGIN{R=1}$2==D{R=0}END{exit R}'</etc/mtab;then
+		out.cmd umount "$DIR_DEST$1"
+	fi
+}
+install.cmd.full() {
+	unset LD_PRELOAD;export LANG=C;
+	install.mount /dev
+	install.mount /dev/pts
+	install.mount /proc
+	out.cmd chroot "$DIR_DEST" "$@"
+	install.umount /proc
+	install.umount /dev/pts
+	install.umount /dev
+}
+install.install() {
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	install.cmd.full apt-get -y install "$@"
+	}
+}
+install.build-dep() {
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	install.cmd.full apt-get -y build-dep "$@"
+	}
+}
+install.update() {
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	install.cmd.full apt-get update
+	}
+}
+install.upgrade() {
+	install.mount /dev
+	install.mount /dev/pts
+	install.mount /proc
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	install.cmd apt-get update
+	install.cmd apt-get -y upgrade
+	install.cmd apt-get -y autoclean
+	}
+	install.umount /proc
+	install.umount /dev/pts
+	install.umount /dev
+}
+
+clean.install() {
+	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/etc/init.d" 
+}
+
+finish.default() {
+	install.entrypoint
+	set.env
+	#install.libc
+	install.lib.missing
+}
+
+##############################################################################
+### Create Containers
+##
+
+DMC_SRC_name=()
+DMC_SRC_tmpt=()
+DMC_SRC_desc=()
+step.add.source() {
+	local i=${#DMC_SRC_name[@]}
+	if ! is.function $1;then
+		out.error "${BASH_SOURCE[1]##*/}:${BASH_LINENO[0]}: $1 is not a function cannot add that task to the list"
+		return 1
+	fi
+	DMC_SRC_name+=($1)
+	shift
+	DMC_SRC_desc[$i]="$*"
+	DMC_SRC_tmpt[$i]="$TMPLT"
+}
+DMC_BLD_name=()
+DMC_BLD_tmpt=()
+DMC_BLD_desc=()
+step.add.build() {
+	local i=${#DMC_BLD_name[@]}
+	if ! is.function $1;then
+		out.error "${BASH_SOURCE[1]##*/}:${BASH_LINENO[0]}: $1 is not a function cannot add that task to the list"
+		return 1
+	fi
+	DMC_BLD_name+=($1)
+	shift
+	DMC_BLD_desc[$i]="$*"
+	DMC_BLD_tmpt[$i]="$TMPLT"
+}
+DMC_INS_name=()
+DMC_INS_tmpt=()
+DMC_INS_desc=()
+step.add.install() {
+	local i=${#DMC_INS_name[@]}
+	if ! is.function $1;then
+		out.error "${BASH_SOURCE[1]##*/}:${BASH_LINENO[0]}: $1 is not a function cannot add that task to the list"
+		return 1
+	fi
+	DMC_INS_name+=($1)
+	shift
+	DMC_INS_desc[$i]="$*"
+	DMC_INS_tmpt[$i]="$TMPLT"
+}
+DMC_CLN_name=()
+DMC_CLN_tmpt=()
+DMC_CLN_desc=()
+step.add.clean() {
+	local i=${#DMC_CLN_name[@]}
+	if ! is.function $1;then
+		out.error "${BASH_SOURCE[1]##*/}:${BASH_LINENO[0]}: $1 is not a function cannot add that task to the list"
+		return 1
+	fi
+	DMC_CLN_name+=($1)
+	shift
+	DMC_CLN_desc[$i]="$*"
+	DMC_CLN_tmpt[$i]="$TMPLT"
+}
+DMC_FIN_name=()
+DMC_FIN_tmpt=()
+DMC_FIN_desc=()
+step.add.finish() {
+	local i=${#DMC_FIN_name[@]}
+	if ! is.function $1;then
+		out.error "${BASH_SOURCE[1]##*/}:${BASH_LINENO[0]}: $1 is not a function cannot add that task to the list"
+		return 1
+	fi
+	DMC_FIN_name+=($1)
+	shift
+	DMC_FIN_desc[$i]="$*"
+	DMC_FIN_tmpt[$i]="$TMPLT"
+}
+DMC_DPL_name=()
+DMC_DPL_tmpt=()
+DMC_DPL_desc=()
+step.add.deploy() {
+	local i=${#DMC_DPL_name[@]}
+	if ! is.function $1;then
+		out.error "${BASH_SOURCE[1]##*/}:${BASH_LINENO[0]}: $1 is not a function cannot add that task to the list"
+		return 1
+	fi
+	DMC_DPL_name+=($1)
+	shift
+	DMC_DPL_desc[$i]="$*"
+	DMC_DPL_tmpt[$i]="$TMPLT"
+}
+
+create.tar() {
+ 	tar czf "$DIR_DEST.tar.gz" --numeric-owner --xattrs --acls -C "$DIR_DEST" .
+}
+
+create() {
+	local i t n p f ARCH
+	local DONE=()
+	if [ ${#DMC_BLD_name[@]} -eq 0 ] && [ ${#DMC_INS_name[@]} -eq 0 ] && [ ${#DMC_DPL_name[@]} -eq 0 ];then
+		out.error "Select a template"
+		return 1
+	fi
+	# For all templates
+	for (( p=0; p<${#TMPTS[@]}; p++ ));do
+		TMPLT=${TMPTS[$p]}
+		DIR_SOURCE="$SOURCEDIR/$TMPLT"
+		if [[ "$DELETE" != "Y" ]];then
+		for (( t=0; t<${#DMC_SRC_name[@]}; t++ ));do
+			# look for the source tasks of this template
+			[[ ${DMC_SRC_tmpt[$t]} != $TMPLT ]] && continue
+			n=${DMC_SRC_name[$t]}
+			is.function ${n}.verify && eval "src.${n}.verify() { ${n}.verify; }"
+			eval "src.$n() { DIR_SOURCE=\"$DIR_SOURCE\";TMPLT=\"$TMPLT\";$n; }"
+			task.add "src.$n" "${DMC_SRC_desc[$t]}"
+		done
+		for (( i=0; i<${#ARCHS[@]}; i++ ));do
+			ARCH=${ARCHS[$i]}
+			for (( t=0; t<${#DMC_BLD_name[@]}; t++ ));do
+				# look for the build tasks of this template
+				[[ ${DMC_BLD_tmpt[$t]} != $TMPLT ]] && continue
+				n=${DMC_BLD_name[$t]}
+				eval "$ARCH.$n() { set.vars \"$ARCH\" \"$TMPLT\";$n; }"
+				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
+				task.add "$ARCH.$n" "${DMC_BLD_desc[$t]}"
+			done
+			for (( t=0; t<${#DMC_INS_name[@]}; t++ ));do
+				# look for the install tasks of this template
+				[[ ${DMC_INS_tmpt[$t]} != $TMPLT ]] && continue
+				n=${DMC_INS_name[$t]}
+				eval "$ARCH.$n() { set.vars \"$ARCH\" \"$TMPLT\";$n; }"
+				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
+				task.add "$ARCH.$n" "${DMC_INS_desc[$t]}"
+			done
+			if [[ "$TOOLS" = "Y" ]];then
+				# install the debugging tools if needed
+				eval "$ARCH.$TMPLT.install.tools() { set.vars \"$ARCH\" \"$TMPLT\";install.tools; }"
+				task.add $ARCH.$TMPLT.install.tools      "Install the debuging tools in $TMPLT:$ARCH"
+			fi
+			f=0
+			for (( t=0; t<${#DMC_CLN_name[@]}; t++ ));do
+				# look for the clean tasks of this template
+				[[ ${DMC_CLN_tmpt[$t]} != $TMPLT ]] && continue
+				f=1
+				n=${DMC_CLN_name[$t]}
+				eval "$ARCH.$n() { set.vars \"$ARCH\" \"$TMPLT\";$n; }"
+				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
+				task.add "$ARCH.$n" "${DMC_CLN_desc[$t]}"
+			done
+			if [ $f -eq 0 ];then
+				eval "$ARCH.$TMPLT.clean.install() { set.vars \"$ARCH\" \"$TMPLT\";clean.install; }"
+				task.add $ARCH.$TMPLT.clean.install      "Default cleanup for $TMPLT:$ARCH"
+			fi
+			f=0
+			for (( t=0; t<${#DMC_FIN_name[@]}; t++ ));do
+				# look for the clean tasks of this template
+				[[ ${DMC_FIN_tmpt[$t]} != $TMPLT ]] && continue
+				f=1
+				n=${DMC_FIN_name[$t]}
+				eval "$ARCH.$n() { set.vars \"$ARCH\" \"$TMPLT\";$n; }"
+				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
+				task.add "$ARCH.$n" "${DMC_FIN_desc[$t]}"
+			done
+			if [ $f -eq 0 ];then
+				eval "$ARCH.$TMPLT.finish.default() { set.vars \"$ARCH\" \"$TMPLT\";finish.default; }"
+				task.add $ARCH.$TMPLT.finish.default      "Default finish for $TMPLT:$ARCH"
+			fi
+			#Create the tar for all requested templates
+			eval "$ARCH.$TMPLT.create.tar() { set.vars \"$ARCH\" \"$TMPLT\";create.tar; }"
+			task.add $ARCH.$TMPLT.create.tar      "Build the tarball for $TMPLT:$ARCH"
+		done
+		fi
+		[ -z "$DOCKERHOST" ] && continue
+		#if the template have a deploy function load the image first
+		f=0
+		for (( t=0; t<${#DMC_DPL_tmpt[@]}; t++ ));do
+			[[ "${DMC_DPL_tmpt[$t]}" = "$TMPLT" ]] && f=1
+		done
+		[ $f -eq 1 ] || continue
+		[ ${#DOCKERARCH[@]} -eq 0 ] && DOCKERARCH=( "${ARCHS[0]}" )
+		for (( i=0; i<${#DOCKERARCH[@]}; i++ ));do
+			ARCH=${DOCKERARCH[$i]}
+			if [[ "$DELETE" != "Y" ]];then
+				eval "upload.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.upload; }"
+				task.add upload.$ARCH.$TMPLT      "Load the tar for $TMPLT:$ARCH in the docker repo"
+			fi
+			[ -z "$MASTER" ] && continue
+			for (( t=0; t<${#DMC_DPL_name[@]}; t++ ));do
+				# look for the clean tasks of this template
+				[[ ${DMC_DPL_tmpt[$t]} != $TMPLT ]] && continue
+				n=${DMC_DPL_name[$t]}
+				is.function ${n}.verify && eval "src.${n}.verify() { ${n}.verify; }"
+				eval "deploy.$ARCH.$n() { TMPLT=${DMC_DPL_tmpt[$t]};$n; }"
+				task.add "deploy.$ARCH.$n" "${DMC_DPL_desc[$t]} ($TMPLT:$ARCH)"
+			done
+		done
+	done
+}
+act.add create "Create the container"
+
+
+
+##############################################################################
+### Load
+##
+json.change() {
+	echo "$1 [$2]"
+}
+
+load.upload() {
+
+	local i changes="--change '$(json.change ENTRYPOINT '"/start"')'"
+	for ((i=0;i<${#CHANGES[@]};i++));do
+		changes="$changes --change '${CHANGES[$i]}'"
+	done
+	echo "docker import $changes - ${TMPLT}:latest < $IMAGEDIR/$ARCH/$TMPLT.tar.gz"
+	cat "$IMAGEDIR/$ARCH/$TMPLT.tar.gz"| net.run "$DOCKERHOST" "docker import $changes - ${TMPLT}:latest"
+	net.run "$DOCKERHOST" docker tag ${TMPLT}:latest localhost:5000/${TMPLT}
+	net.run "$DOCKERHOST" docker push localhost:5000/${TMPLT}
+}
+
+load() {
+	ARCH=${ARCHS[0]}
+	task.add load.upload		"Load the tar in a docker env"; 
+}
+act.add load "Load a container"
+
+
+[ ! -z $TMPLT ] && [ -f "${TEMPLATE_DIR}/${TMPLT}.sh" ] && templates.load $TMPLT
+act.script "$@"
