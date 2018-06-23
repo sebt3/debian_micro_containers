@@ -210,6 +210,7 @@ rootfs.fix() {
 			sed -i "s#prefix=/usr\$#prefix=$ROOTDIR/$ARCH/usr#g;s#libdir=/usr/lib#libdir=$ROOTDIR/$ARCH/usr/lib#g;s#includedir=/usr/include#includedir=$ROOTDIR/$ARCH/usr/include#g" "$ROOTDIR/$ARCH/scripts/$(basename $f)"
 		fi
 	done
+	rm -f $ROOTDIR/$ARCH/usr/bin/${pref}-* $ROOTDIR/$ARCH/usr/bin/make
 	for f in $ROOTDIR/$ARCH/etc/alternatives/lib*;do
 		[ ! -e $f ] && ln -sf "../..$(readlink $f)" "$f"
 	done
@@ -269,6 +270,9 @@ rootfs.install() {
 	export DEBIAN_FRONTEND=noninteractive
 	rootfs.cmd.full "$ARCH" apt-get -y install "$@"
 	}
+}
+rootfs.install.ca() {
+	rootfs.install "$1" ca-certificates ca-certificates-java
 }
 rootfs.build-dep() {
 	ARCH=$1;shift
@@ -374,7 +378,29 @@ path-exclude=/usr/share/info/*
 path-exclude=/usr/share/man/*
 path-exclude=/usr/share/doc/*
 ENDCFG
-	out.cmd debootstrap --variant=minbase --arch "$ARCH" "$DIST" "$ROOTDIR/$ARCH" "$MIRROR"
+	out.cmd debootstrap --variant=minbase --arch "$ARCH" "$DIST" "$ROOTDIR/$ARCH" "$MIRROR" 
+}
+
+setup.cmake() {
+	ARCH=$1
+	set.env
+	cat >"$ROOTDIR/$ARCH/toolchain.cmake"<<ENDF
+# this one is important
+SET(CMAKE_SYSTEM_NAME Linux)
+
+# specify the cross compiler
+SET(CMAKE_C_COMPILER   $CC)
+SET(CMAKE_CXX_COMPILER $CXX)
+
+# where is the target environment 
+SET(CMAKE_FIND_ROOT_PATH  $TOOLCHAIN_ROOT)
+
+# search for programs in the build host directories
+#SET(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM BOTH)
+# for libraries and headers in the target directories
+#SET(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+#SET(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+ENDF
 }
 
 setup() {
@@ -384,10 +410,12 @@ setup() {
 	task.add setup.dirs			"Create the directories"
 	for (( i=0; i<${#ARCHS[@]}; i++ ));do
 		eval "setup.bootstrap.${ARCHS[$i]}() { setup.bootstrap \"${ARCHS[$i]}\"; }"
+		eval "setup.cmake.${ARCHS[$i]}() { setup.cmake \"${ARCHS[$i]}\"; }"
 		eval "rootfs.prepare.${ARCHS[$i]}() { rootfs.prepare \"${ARCHS[$i]}\"; }"
 		eval "rootfs.fix.${ARCHS[$i]}() { rootfs.fix \"${ARCHS[$i]}\"; }"
 		eval "rootfs.upgrade.${ARCHS[$i]}() { rootfs.upgrade \"${ARCHS[$i]}\"; }"
 		task.add setup.bootstrap.${ARCHS[$i]} "Bootstrap the ${ARCHS[$i]} rootfs"
+		task.add setup.cmake.${ARCHS[$i]} "Configure the cmake toolchain for ${ARCHS[$i]}"
 		task.add rootfs.prepare.${ARCHS[$i]}  "Prepare ${ARCHS[$i]} rootfs for chroot"
 		task.add rootfs.upgrade.${ARCHS[$i]}  "Upgrade ${ARCHS[$i]} rootfs to the lastest version"
 		task.add rootfs.fix.${ARCHS[$i]}      "Prepare ${ARCHS[$i]} rootfs for cross-compilation"
@@ -420,6 +448,9 @@ source.file() {
 	if [ ! -f "$DIR_SOURCE/$1" ];then
 		curl -sL "$2">"$DIR_SOURCE/$1"
 	fi
+}
+source.tar() {
+	source.file "$@"
 	mkdir -p "$DIR_SOURCE/${1%%\.*}"
 	tar -C "$DIR_SOURCE/${1%%\.*}" --strip-components=1 -xf "$DIR_SOURCE/$1"
 }
@@ -454,7 +485,7 @@ set.env() {
 	export TOOLCHAIN_ROOT="$ROOTDIR/$ARCH"
 	#export CMAKETOOLCHAINFILE="$TOOLCHAIN_ROOT/toolchain.cmake"
 	export TARGET_SYS
-	export CXXFLAGS="$CXX_DEFINES --sysroot=$TOOLCHAIN_ROOT $CXXFLAGS_ADD -I$TOOLCHAIN_ROOT/usr/include"
+	export CXXFLAGS="$CXX_DEFINES --sysroot=$TOOLCHAIN_ROOT $CXXFLAGS_ADD -I$TOOLCHAIN_ROOT/usr/include -I$TOOLCHAIN_ROOT/usr/include/$TARGET_SYS"
 	export CPPFLAGS="$CXXFLAGS" CFLAGS="$CXXFLAGS"
 	export CROSSTOOL="$TARGET_SYS"
 	export CXX=$CROSSTOOL-g++ CC=$CROSSTOOL-gcc AR=$CROSSTOOL-ar AS=$CROSSTOOL-as RANLIB=$CROSSTOOL-ranlib STRIP=$CROSSTOOL-strip
@@ -471,6 +502,12 @@ set.env() {
 set.vars() {
 	ARCH=$1
 	TMPLT=$2
+	case $ARCH in
+	arm64)	TARGET_SYS="aarch64-linux-gnu";;
+	armhf)	TARGET_SYS="arm-linux-gnueabihf";;
+	amd64)	TARGET_SYS="x86_64-linux-gnu";;
+	i386)	TARGET_SYS="i386-linux-gnu";;
+	esac
 	DIR_SOURCE="$SOURCEDIR/$TMPLT"
 	DIR_BUILD="$BUILDDIR/$TMPLT/$ARCH"
 	DIR_DEST="$IMAGEDIR/$ARCH/$TMPLT"
@@ -479,6 +516,12 @@ configure.autoconf() {
 	cd "$DIR_BUILD/$1"
 	shift
 	./configure --host=$TARGET_SYS "$@"
+}
+
+configure.cmake() {
+	local p=$1;shift
+	cd "$DIR_BUILD/$p"
+	CMAKE_PREFIX_PATH="$ROOTDIR/$ARCH/usr/lib/$TARGET_SYS/cmake" cmake -DCMAKE_TOOLCHAIN_FILE="$ROOTDIR/$ARCH/toolchain.cmake" "$DIR_SOURCE/$p" $@
 }
 build.make() {
 	cd "$DIR_BUILD/$1";make -j 4
@@ -565,8 +608,34 @@ install.binaries() {
 install.tools() {
 	install.binaries "/usr/bin/test" "/bin/cat" "/bin/sed" "/bin/hostname" "/bin/chown" "/bin/mkdir" "/bin/chmod" "/usr/bin/awk" "/sbin/ifconfig" "/bin/netstat" "/bin/ps" "/usr/bin/host" "/bin/cp" "/bin/df" "/bin/ip" "/bin/kill" "/bin/ls" "/sbin/ip" "/usr/bin/head" "/usr/bin/tail" "/usr/bin/" "/usr/bin/" "/usr/bin/" "/usr/bin/"
 }
+install.su() {
+	install.binaries "/bin/su"  "/usr/lib/$TARGET_SYS/libpam.so"
+	mkdir "$DIR_DEST/etc/pam.d"
+	cat>"$DIR_DEST/etc/pam.d/su"<<ENDF
+auth sufficient pam_rootok.so
+auth sufficient pam_wheel.so trust
+auth    [success=1 default=ignore]      pam_unix.so nullok_secure
+auth    requisite                       pam_deny.so
+auth    required                        pam_permit.so
+account [success=1 new_authtok_reqd=done default=ignore]        pam_unix.so 
+account requisite                       pam_deny.so
+account required                        pam_permit.so
+session [default=1]                     pam_permit.so
+session requisite                       pam_deny.so
+session required                        pam_permit.so
+session required        pam_unix.so 
+ENDF
+}
+install.sslcerts() {
+	cp $ROOTDIR/$ARCH/etc/ssl/certs/*.pem "$DIR_DEST/etc/ssl/certs"
+	cp $ROOTDIR/$ARCH/etc/ssl/certs/*.crt "$DIR_DEST/etc/ssl/certs"
+	cp -ap $ROOTDIR/$ARCH/etc/ssl/certs/*.0 "$DIR_DEST/etc/ssl/certs"
+	cp $ROOTDIR/$ARCH/etc/ssl/certs/java/cacerts "$DIR_DEST/etc/ssl/certs/java"
+
+}
 install.entrypoint() {
 	install.binaries "/bin/bash"
+	ln -s "/bin/bash" "$DIR_DEST/bin/sh"
 	cat>"$DIR_DEST/start"<<ENDSTART
 #!/bin/bash
 SCRIPT_DIR=/start.d
@@ -683,13 +752,13 @@ install.upgrade() {
 }
 
 clean.install() {
-	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/etc/init.d" 
+	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/etc/init.d" "$DIR_DEST/usr/share/locale"
 }
 
 finish.default() {
 	install.entrypoint
 	set.env
-	#install.libc
+	install.libc
 	install.lib.missing
 }
 

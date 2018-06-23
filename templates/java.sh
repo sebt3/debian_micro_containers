@@ -29,51 +29,21 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ##############################################################################
-#@DESC@  mariadb
-#@GROUP@ base
-maria.prepare.verify() { task.verify.permissive; }
-maria.prepare() {
+#@DESC@  java
+#@GROUP@ core
+
+java.prepare.verify() { task.verify.permissive; }
+java.prepare() {
 	prepare.dir "$TMPLT"
-	rootfs.install "$ARCH" libaio1 libjemalloc1 libreadline5
-	prepare.get.packages mariadb-client-10.1 mariadb-client-core-10.1 mariadb-common mariadb-server-10.1 mariadb-server-core-10.1 libmariadbclient18
+	rootfs.install.ca "$ARCH"
+	prepare.get.packages openjdk-8-jre-headless ca-certificates-java openssl ca-certificates java-common liblcms2-2 libpcsclite1 libxext6 libxrender1 libxtst6 libxi6 fonts-dejavu-core libfontconfig1
 }
 
-maria.install() {
+java.install() {
 	install.init
+	install.sslcerts
 	install.packages
-	install.binaries "/usr/bin/test" "/bin/cat" "/bin/sed" "/bin/hostname" "/bin/chown" "/bin/mkdir" "/bin/chmod"
 }
-maria.config() {
-	local DIRS=("$DIR_DEST/var/run/mysqld" "$DIR_DEST/var/log/mysql" "$DIR_DEST/var/lib/mysql")
-	mkdir -p "${DIRS[@]}" "$DIR_DEST/start.d"
-	chown -R 118:126  "${DIRS[@]}"
-	rm -f "$DIR_DEST/var/log/mysql/error.log"
-	ln -sf /dev/stderr "$DIR_DEST/var/log/mysql/error.log"
-	echo "mysql:x:118:126:MySQL Server,,,:/nonexistent:/bin/false">>"$DIR_DEST/etc/passwd"
-	cat >"$DIR_DEST/start.d/mariadb" <<ENDF
-if [ ! -f /var/lib/mysql/ibdata1 ]; then
-	bash /usr/bin/mysql_install_db --user=mysql --force
-fi
-exec /usr/sbin/mysqld -u mysql --bind-address=0.0.0.0
-ENDF
-}
+step.add.build   java.prepare	"Grab the java packages"
+step.add.install java.install	"Install java packages"
 
-maria.deploy() {
-	CNAME=${CNAME:-"mariadb"}
-	IP=10.110.0.110
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount mysql-data "/var/lib/mysql")")
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.host mysql-data /opt/mysql)")
-	LINKS+=("$(json.link 3306)")
-	CONTAINERS+=("$(json.container "${CPREFIX}mariadb" "localhost:5000/$CNAME:latest" '"mariadb"' "$MOUNTS" "$(json.port 3306)")")
-	deploy.default
-}
-
-#step.add.source
-step.add.build   maria.prepare "Prepare mariaDB packages"
-step.add.install maria.install "Install mariaDB packages"
-step.add.install maria.config  "Configure mariaDB"
-step.add.deploy  maria.deploy  "Deploy mariaDB to kubernetes"
-
-maria() {
-	kube.exec "$(kube.get.pod maria)" -t -i mysql
-}

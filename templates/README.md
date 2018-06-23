@@ -192,6 +192,7 @@ The rootfs serve as source to copy files from and as target for cross-compilatio
 | `prepare.dir`  | **name** | Create an empty build directory for **name** |
 | `set.env`  |   | Setup the environnement variables used for cross-compilation (should be used before any ./configure, cmake or make command) |
 | `configure.autoconf` | **name** configure options | Start the ./configure script of the **name** sub-project with the given options in a cross-compilation friendly way |
+| `configure.cmake` | **name** cmake options | Start the cmake for the **name** sub-project with the given options in a cross-compilation friendly way |
 | `build.make`  | **name** | run "make" in the directory of **name** |
 
 ### Install
@@ -205,7 +206,8 @@ the Install helper functions split in 5 groups
 | `install.init` |   | Create the image directory with the bare minimum files |
 | `install.lib.missing` |   | Install all the missing lib in the image. (part of the default finish step)  |
 | `install.binaries` | commands | Copy commands from the rootfs to the image directory |
-| `install.entrypoint` |   | Install a very simple "/start" script that can serve as docker entrypoint  |
+| `install.su` |   | Install the "su" command and related configuration |
+| `install.sslcerts` |   | Install the SSL root certs |
 
 #### Install from sources
 

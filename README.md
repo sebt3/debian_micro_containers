@@ -3,7 +3,7 @@
 dmc is a bash script that build micro container images based on debian.
 Features :
 - Multi-architectures support
-- Multi-templates designs, "built your owns"
+- Multi-templates designs, "[built your owns](https://github.com/sebt3/debian_micro_containers/blob/master/templates/README.md "Howto make your own")"
 - debian/ubuntu mirrors support
 - Build Micro containers by default
 - Able to build "Small" containers too
@@ -13,6 +13,7 @@ Features :
 
 ## Why
 Using Dockerfile to build container images have many drawbacks.
+[Ref](https://blogs.oracle.com/developers/the-microcontainer-manifesto "The microcontainer manifesto")"
 
 ### Use single layer images
 Per nature, a docker image is a multi-layered overlayfs image. Each "RUN" command in a dockerfile create a new layer. Each layer add to the size of the final image. That's the reason why a "RUN apt-get clean" line do NOT reduce the size of the image.

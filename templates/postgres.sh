@@ -29,51 +29,49 @@
 # OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ##############################################################################
-#@DESC@  mariadb
+#@DESC@  postgres
 #@GROUP@ base
-maria.prepare.verify() { task.verify.permissive; }
-maria.prepare() {
-	prepare.dir "$TMPLT"
-	rootfs.install "$ARCH" libaio1 libjemalloc1 libreadline5
-	prepare.get.packages mariadb-client-10.1 mariadb-client-core-10.1 mariadb-common mariadb-server-10.1 mariadb-server-core-10.1 libmariadbclient18
+pg.prepare.verify() { task.verify.permissive; }
+pg.prepare() {
+	rootfs.install "$ARCH" libgssapi-krb5-2 libsasl2-2
+	prepare.dir "$TMPLT" 
+	prepare.get.packages postgresql-10 postgresql-client-10 postgresql-common libpq5  libldap-2.4-2 tzdata
 }
 
-maria.install() {
+pg.install() {
 	install.init
 	install.packages
-	install.binaries "/usr/bin/test" "/bin/cat" "/bin/sed" "/bin/hostname" "/bin/chown" "/bin/mkdir" "/bin/chmod"
+	install.su
+	install.binaries "/bin/chown" # "/bin/mkdir"
+	rm -rf "$DIR_DEST/usr/share/postgresql/10/man"
+	mkdir -p "$DIR_DEST/var/run/postgresql"
+	# /mnt/virtual/containers/arm64/postgres/usr/lib/postgresql/10/bin/postgres
 }
-maria.config() {
-	local DIRS=("$DIR_DEST/var/run/mysqld" "$DIR_DEST/var/log/mysql" "$DIR_DEST/var/lib/mysql")
-	mkdir -p "${DIRS[@]}" "$DIR_DEST/start.d"
-	chown -R 118:126  "${DIRS[@]}"
-	rm -f "$DIR_DEST/var/log/mysql/error.log"
-	ln -sf /dev/stderr "$DIR_DEST/var/log/mysql/error.log"
-	echo "mysql:x:118:126:MySQL Server,,,:/nonexistent:/bin/false">>"$DIR_DEST/etc/passwd"
-	cat >"$DIR_DEST/start.d/mariadb" <<ENDF
-if [ ! -f /var/lib/mysql/ibdata1 ]; then
-	bash /usr/bin/mysql_install_db --user=mysql --force
+pg.config() {
+	echo "postgres:x:104:">>"$DIR_DEST/etc/group"
+	echo "postgres:x:102:104:PostgreSQL administrator,,,:/var/lib/postgresql:/bin/bash">>"$DIR_DEST/etc/passwd"
+	cat >"$DIR_DEST/start.d/postgres" <<ENDF
+chown postgres:postgres /var/lib/postgresql /var/run/postgresql
+if [ ! -d /var/lib/postgresql/pg_commit_ts ];then
+	su - postgres -c "/usr/lib/postgresql/10/bin/initdb -D /var/lib/postgresql --auth-local peer --auth-host md5 --no-locale --encoding=UTF8"
 fi
-exec /usr/sbin/mysqld -u mysql --bind-address=0.0.0.0
+exec su - postgres -c "/usr/lib/postgresql/10/bin/postgres -h 0.0.0.0 -D /var/lib/postgresql"
 ENDF
 }
 
-maria.deploy() {
-	CNAME=${CNAME:-"mariadb"}
-	IP=10.110.0.110
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount mysql-data "/var/lib/mysql")")
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.host mysql-data /opt/mysql)")
-	LINKS+=("$(json.link 3306)")
-	CONTAINERS+=("$(json.container "${CPREFIX}mariadb" "localhost:5000/$CNAME:latest" '"mariadb"' "$MOUNTS" "$(json.port 3306)")")
+pg.deploy() {
+	CNAME=${CNAME:-"postgres"}
+	IP=10.110.0.111
+	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount postgres-data "/var/lib/postgresql")")
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.host postgres-data /opt/postgresql)")
+	LINKS+=("$(json.link 5432)")
+	CONTAINERS+=("$(json.container "${CPREFIX}postgres" "localhost:5000/$CNAME:latest" '"postgres"' "$MOUNTS" "$(json.port 5432)")")
 	deploy.default
 }
 
 #step.add.source
-step.add.build   maria.prepare "Prepare mariaDB packages"
-step.add.install maria.install "Install mariaDB packages"
-step.add.install maria.config  "Configure mariaDB"
-step.add.deploy  maria.deploy  "Deploy mariaDB to kubernetes"
+step.add.build   pg.prepare "Get packages for postgres"
+step.add.install pg.install "Install postgres packages"
+step.add.install pg.config  "Configure postgres"
+step.add.deploy  pg.deploy  "Deploy postgres to kubernetes"
 
-maria() {
-	kube.exec "$(kube.get.pod maria)" -t -i mysql
-}
