@@ -117,7 +117,7 @@ out.notice() {	out.lvl NOTICE "$*"; }
 out.detail() {	out.lvl DETAIL "$*"; }
 out.task() {	out.lvl TASK "$*"; }
 out.fail() {	out.lvl FAIL "$*";exit 1; }
-out.cmd() {	out.lvl CMD "$*";eval "$*" 2>&1|out.put; test ${PIPESTATUS[0]} -eq 0; }
+out.cmd() {	out.lvl CMD "$@";eval "$@" 2>&1|out.put; test ${PIPESTATUS[0]} -eq 0; }
 
 log.stamp() { date '+%Y%m%d_%H%M%S'; }
 log.separator() { local c=${1:-"="};awk -v "V=$c" 'BEGIN{while (c++<80) printf V;printf "\n"}';}

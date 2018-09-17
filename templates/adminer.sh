@@ -82,14 +82,13 @@ ENDCFG
 adminer.deploy() {
 	CNAME=${CNAME:-"adminer"}
 	CPREFIX=${CPREFIX:-"adminer-"}
-	IP=10.110.0.121
 	MOUNTS="$(json.mount php-socket "/run/php"),$(json.mount nginx-log "/var/log/nginx")"
 	VOLUMES="$(json.volume.empty php-socket),$(json.volume.empty nginx-log)"
 	LINKS+=("$(json.link 80)")
 	#fluent
-	CONTAINERS+=("$(json.container "${CPREFIX}nginx" "localhost:5000/$CNAME:latest" '"nginx"' "$MOUNTS" "$(json.port 80)")")
-	CONTAINERS+=("$(json.container "${CPREFIX}php" "localhost:5000/$CNAME:latest"  '"php"' "$MOUNTS")")
-	deploy.default
+	CONTAINERS+=("$(json.container "${CPREFIX}nginx" "192.168.10.200:5000/$CNAME:latest" '"nginx"' "$MOUNTS" "$(json.port 80)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}php" "192.168.10.200:5000/$CNAME:latest"  '"php"' "$MOUNTS")")
+	deploy.public
 }
 
 step.add.source  adminer.sources	"Get adminer sources"

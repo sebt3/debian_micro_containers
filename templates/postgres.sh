@@ -33,39 +33,45 @@
 #@GROUP@ base
 pg.prepare.verify() { task.verify.permissive; }
 pg.prepare() {
-	rootfs.install "$ARCH" libgssapi-krb5-2 libsasl2-2
+	rootfs.install "$ARCH" libgssapi-krb5-2 libsasl2-2 less
 	prepare.dir "$TMPLT" 
-	prepare.get.packages postgresql-10 postgresql-client-10 postgresql-common libpq5  libldap-2.4-2 tzdata
+	prepare.get.packages postgresql-10 postgresql-client-10 postgresql-common libpq5  libldap-2.4-2 tzdata postgresql-client-common
 }
 
 pg.install() {
 	install.init
 	install.packages
 	install.su
-	install.binaries "/bin/chown" # "/bin/mkdir"
+	install.binaries "/bin/chown" "/bin/mkdir"  "/bin/less"
 	rm -rf "$DIR_DEST/usr/share/postgresql/10/man"
 	mkdir -p "$DIR_DEST/var/run/postgresql"
+	ln -s "/bin/less" "$DIR_DEST/bin/pager"
 	# /mnt/virtual/containers/arm64/postgres/usr/lib/postgresql/10/bin/postgres
 }
 pg.config() {
 	echo "postgres:x:104:">>"$DIR_DEST/etc/group"
 	echo "postgres:x:102:104:PostgreSQL administrator,,,:/var/lib/postgresql:/bin/bash">>"$DIR_DEST/etc/passwd"
+	local f
+	for f in createdb dropdb psql createuser dropuser;do 
+		ln -sf "/usr/lib/postgresql/10/bin/$f"  "$DIR_DEST/usr/bin/$f"
+	done
 	cat >"$DIR_DEST/start.d/postgres" <<ENDF
-chown postgres:postgres /var/lib/postgresql /var/run/postgresql
-if [ ! -d /var/lib/postgresql/pg_commit_ts ];then
-	su - postgres -c "/usr/lib/postgresql/10/bin/initdb -D /var/lib/postgresql --auth-local peer --auth-host md5 --no-locale --encoding=UTF8"
+mkdir -p /var/lib/postgresql/data
+chown -R postgres:postgres /var/lib/postgresql/data /var/run/postgresql
+if [ ! -d /var/lib/postgresql/data/pg_commit_ts ];then
+	su - postgres -c "/usr/lib/postgresql/10/bin/initdb -D /var/lib/postgresql/data --auth-local peer --auth-host md5 --no-locale --encoding=UTF8"
 fi
-exec su - postgres -c "/usr/lib/postgresql/10/bin/postgres -h 0.0.0.0 -D /var/lib/postgresql"
+exec su - postgres -c "/usr/lib/postgresql/10/bin/postgres -h 0.0.0.0 -D /var/lib/postgresql/data"
 ENDF
 }
 
 pg.deploy() {
-	CNAME=${CNAME:-"postgres"}
-	IP=10.110.0.111
+	kube.claim "${CPREFIX}postgres" "${PG_CLAIM_SIZE:-"10Gi"}"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim postgres-data "${CPREFIX}postgres")")
 	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount postgres-data "/var/lib/postgresql")")
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.host postgres-data /opt/postgresql)")
+	CNAME=${CNAME:-"postgres"}
 	LINKS+=("$(json.link 5432)")
-	CONTAINERS+=("$(json.container "${CPREFIX}postgres" "localhost:5000/$CNAME:latest" '"postgres"' "$MOUNTS" "$(json.port 5432)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}postgres" "192.168.10.200:5000/$CNAME:latest" '"postgres"' "$MOUNTS" "$(json.port 5432)")")
 	deploy.default
 }
 

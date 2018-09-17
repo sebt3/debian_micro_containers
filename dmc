@@ -54,9 +54,10 @@ ROOTDIR=${ROOTDIR:-"$(cfg.get ROOTDIR)"};	ROOTDIR=${ROOTDIR:-"$BASE_dir/rootfs"}
 BUILDDIR=${BUILDDIR:-"$(cfg.get BUILDDIR)"};	BUILDDIR=${BUILDDIR:-"$BASE_dir/builds"}
 IMAGEDIR=${IMAGEDIR:-"$(cfg.get IMAGEDIR)"};	IMAGEDIR=${IMAGEDIR:-"$BASE_dir/images"}
 DOCKERHOST=${DOCKERHOST:-"$(cfg.get DOCKERHOST)"};
+NAMESPACE=${NAMESPACE:-"$(cfg.get NAMESPACE)"};NAMESPACE=${NAMESPACE:-"default"};
 DOCKERARCH=( $(sed 's/,/ /g' <<<${DOCKERARCH:-$(cfg.get DOCKERARCH)}) );
 MASTER=${MASTER:-"$(cfg.get MASTER)"};
-REPODOCKER=${REPODOCKER:-"$(cfg.get REPODOCKER)"};REPODOCKER=${REPODOCKER:-"http://localhost:5000"}
+REPODOCKER=${REPODOCKER:-"$(cfg.get REPODOCKER)"};REPODOCKER=${REPODOCKER:-"localhost:5000"}
 
 ##############################################################################
 ### Arguments management
@@ -66,6 +67,7 @@ args.declare ARCHS	-A --archs  Vals NoOption NotMandatory   "Architectures to bu
 args.declare DIST	-D --dist   Vals NoOption NotMandatory   "Debian disribution		(DEFAULT: $DIST)"
 args.declare MIRROR	-M --mirror Vals NoOption NotMandatory   "Debian mirror		(DEFAULT: $MIRROR)"
 args.declare DOCKERHOST	-H --host   Vals NoOption NotMandatory   "Docker hostname		(DEFAULT: $DOCKERHOST)"
+args.declare NAMESPACE	-N --namespace Vals NoOption NotMandatory   "Kubernetes namespace		(DEFAULT: $NAMESPACE)"
 args.declare TOOLS    -T --tools  NoVals NoOption NotMandatory   "Add some debuging tools to the image (not for production)"
 args.declare DELETE   -X --delete NoVals NoOption NotMandatory   "Remove from kubernetes"
 args.option.declare TMPTS  -t --templates	  NotMandatory N "A coma-separated list of templates"
@@ -282,7 +284,7 @@ rootfs.build-dep() {
 	}
 }
 rootfs.update() {
-	ARCH=$1;shift
+	ARCH=${1:-"$ARCH"};shift
 	{
 	export DEBIAN_FRONTEND=noninteractive
 	rootfs.cmd.full "$ARCH" apt-get update
@@ -336,7 +338,7 @@ setup.install() {
 			c="$c crossbuild-essential-${ARCHS[$i]}"
 		fi
 	done
-	out.cmd apt-get -y install debootstrap qemu binfmt-support qemu-user-static curl $c
+	out.cmd apt-get -y install debootstrap qemu binfmt-support qemu-user-static golang curl libpam0g-dev $c
 }
 setup.dirs() {
 	local i
@@ -436,12 +438,17 @@ source.apt() {
 source.git(){
 	if [ -d "$DIR_SOURCE/$1/.git" ];then
 		cd  "$DIR_SOURCE/$1"
-		git pull
+		out.cmd git pull
 	else
 		mkdir -p "$DIR_SOURCE"
 		cd  "$DIR_SOURCE"
-		git clone "$2" "$1"
+		out.cmd git clone "$2" "$1"
 	fi
+}
+source.go() {
+	local prj=$1;shift
+	mkdir -p "$GOPATH"
+	out.cmd go get -u "$@" "$prj"
 }
 source.file() {
 	mkdir -p "$DIR_SOURCE"
@@ -476,15 +483,15 @@ prepare.get.packages() {
 set.env() {
 	local pref=""
 	case $ARCH in
-	arm64)	TARGET_SYS="aarch64-linux-gnu";;
-	armhf)	TARGET_SYS="arm-linux-gnueabihf";;
-	amd64)	TARGET_SYS="x86_64-linux-gnu";;
-	i386)	TARGET_SYS="i386-linux-gnu";;
+	arm64)	TARGET_SYS="aarch64-linux-gnu";		GOARCH="arm64";;
+	armhf)	TARGET_SYS="arm-linux-gnueabihf";	GOARCH="arm";;
+	amd64)	TARGET_SYS="x86_64-linux-gnu";		GOARCH="amd64";;
+	i386)	TARGET_SYS="i386-linux-gnu";		GOARCH="386";;
 	*)	out.error "Unknown architecture $ARCH";return 1;;
 	esac
 	export TOOLCHAIN_ROOT="$ROOTDIR/$ARCH"
 	#export CMAKETOOLCHAINFILE="$TOOLCHAIN_ROOT/toolchain.cmake"
-	export TARGET_SYS
+	export TARGET_SYS GOARCH
 	export CXXFLAGS="$CXX_DEFINES --sysroot=$TOOLCHAIN_ROOT $CXXFLAGS_ADD -I$TOOLCHAIN_ROOT/usr/include -I$TOOLCHAIN_ROOT/usr/include/$TARGET_SYS"
 	export CPPFLAGS="$CXXFLAGS" CFLAGS="$CXXFLAGS"
 	export CROSSTOOL="$TARGET_SYS"
@@ -498,24 +505,29 @@ set.env() {
 	export PATH="$TOOLCHAIN_ROOT/scripts:$PATH"
 	export HOST_CC=gcc HOST_CXX=g++
 	export LD_LIBRARY_PATH="$TOOLCHAIN_ROOT/usr/lib:$TOOLCHAIN_ROOT/usr/lib/$TARGET_SYS:$TOOLCHAIN_ROOT/lib:$LD_LIBRARY_PATH"
+	export CGO_CFLAGS="$CFLAGS"
+	export CGO_CXXFLAGS="$CXXFLAGS"
+	export CGO_LDFLAGS="$LDFLAGS"
 }
 set.vars() {
 	ARCH=$1
 	TMPLT=$2
 	case $ARCH in
-	arm64)	TARGET_SYS="aarch64-linux-gnu";;
-	armhf)	TARGET_SYS="arm-linux-gnueabihf";;
-	amd64)	TARGET_SYS="x86_64-linux-gnu";;
-	i386)	TARGET_SYS="i386-linux-gnu";;
+	arm64)	TARGET_SYS="aarch64-linux-gnu";		GOARCH="arm64";;
+	armhf)	TARGET_SYS="arm-linux-gnueabihf";	GOARCH="arm";;
+	amd64)	TARGET_SYS="x86_64-linux-gnu";		GOARCH="amd64";;
+	i386)	TARGET_SYS="i386-linux-gnu";		GOARCH="386";;
 	esac
 	DIR_SOURCE="$SOURCEDIR/$TMPLT"
 	DIR_BUILD="$BUILDDIR/$TMPLT/$ARCH"
 	DIR_DEST="$IMAGEDIR/$ARCH/$TMPLT"
+	GOPATH=$DIR_SOURCE
+	export TARGET_SYS GOARCH GOPATH
 }
 configure.autoconf() {
 	cd "$DIR_BUILD/$1"
 	shift
-	./configure --host=$TARGET_SYS "$@"
+	out.cmd ./configure --host=$TARGET_SYS "$@"
 }
 
 configure.cmake() {
@@ -524,12 +536,22 @@ configure.cmake() {
 	CMAKE_PREFIX_PATH="$ROOTDIR/$ARCH/usr/lib/$TARGET_SYS/cmake" cmake -DCMAKE_TOOLCHAIN_FILE="$ROOTDIR/$ARCH/toolchain.cmake" "$DIR_SOURCE/$p" $@
 }
 build.make() {
-	cd "$DIR_BUILD/$1";make -j 4
+	cd "$DIR_BUILD/$1";out.cmd make -j 4
+}
+build.go() {
+	cd "$GOPATH/src/$1"
+	shift
+	out.cmd go build "$@"
 }
 build.copy.source() {
 	mkdir -p "$DIR_BUILD/$1"
 	rm -rf "$DIR_BUILD/$1/"*
 	cp -Rapf "$DIR_SOURCE/$1/"* "$DIR_BUILD/$1"
+}
+
+install.go() {
+	mkdir -p "$DIR_DEST/usr/bin"
+	cp -apvf "$GOPATH/bin/linux_$GOARCH/"* "$DIR_DEST/usr/bin"
 }
 
 install.make() {
@@ -571,6 +593,7 @@ install.libc() {
 }
 install.lib.missing() {
 	local i f NEED BIN EXIST ERR=0 INSTALL=1
+	mkdir -p $DIR_DEST/usr/lib
 	while [ $ERR -eq 0 ] && [ ${INSTALL} -gt 0 ];do
 		BIN=($(find $DIR_DEST -type f -executable;for d in $(find $DIR_DEST -type d -name 'lib');do find $d -type f -name '*.so*';done) )
 		NEED=($(for i in ${BIN[@]};do file "$i"|grep -q "ELF" || continue;${TARGET_SYS}-objdump -x $i|awk '$1=="NEEDED"{print $2}';done|sort -u) )
@@ -591,6 +614,9 @@ install.lib.missing() {
 	done
 	return $ERR
 }
+
+# Pour voir les posts install :
+# for i in /mnt/virtual_slow/builds/postgres/arm64/*deb;do echo "---------------$i----------------------------";ar p "$i" control.tar.xz|tar JOx ./postinst;done
 install.packages() {
 	local i
 	for i in "$DIR_BUILD/"*.deb;do
@@ -606,11 +632,18 @@ install.binaries() {
 	done
 }
 install.tools() {
-	install.binaries "/usr/bin/test" "/bin/cat" "/bin/sed" "/bin/hostname" "/bin/chown" "/bin/mkdir" "/bin/chmod" "/usr/bin/awk" "/sbin/ifconfig" "/bin/netstat" "/bin/ps" "/usr/bin/host" "/bin/cp" "/bin/df" "/bin/ip" "/bin/kill" "/bin/ls" "/sbin/ip" "/usr/bin/head" "/usr/bin/tail" "/usr/bin/" "/usr/bin/" "/usr/bin/" "/usr/bin/"
+	install.binaries "/usr/bin/test" "/bin/cat" "/bin/sed" "/bin/hostname" "/bin/chown" "/bin/mkdir" "/bin/chmod" "/usr/bin/awk" "/sbin/ifconfig" "/bin/netstat" "/bin/ps" "/usr/bin/host" "/bin/cp" "/bin/df" "/bin/ip" "/bin/kill" "/bin/ls" "/sbin/ip" "/usr/bin/head" "/usr/bin/tail" "/usr/bin/nslookup"
+#cp: impossible d'évaluer '/mnt/virtual_slow/rootfs/arm64/sbin/ifconfig': Aucun fichier ou dossier de ce type
+#cp: impossible d'évaluer '/mnt/virtual_slow/rootfs/arm64/bin/netstat': Aucun fichier ou dossier de ce type
+#cp: impossible d'évaluer '/mnt/virtual_slow/rootfs/arm64/bin/ps': Aucun fichier ou dossier de ce type
+#cp: impossible d'évaluer '/mnt/virtual_slow/rootfs/arm64/bin/ip': Aucun fichier ou dossier de ce type
+#cp: impossible d'évaluer '/mnt/virtual_slow/rootfs/arm64/bin/kill': Aucun fichier ou dossier de ce type
+#cp: impossible d'évaluer '/mnt/virtual_slow/rootfs/arm64/sbin/ip': Aucun fichier ou dossier de ce type
+
 }
 install.su() {
 	install.binaries "/bin/su"  "/usr/lib/$TARGET_SYS/libpam.so"
-	mkdir "$DIR_DEST/etc/pam.d"
+	mkdir -p "$DIR_DEST/etc/pam.d"
 	cat>"$DIR_DEST/etc/pam.d/su"<<ENDF
 auth sufficient pam_rootok.so
 auth sufficient pam_wheel.so trust
@@ -627,15 +660,18 @@ session required        pam_unix.so
 ENDF
 }
 install.sslcerts() {
-	cp $ROOTDIR/$ARCH/etc/ssl/certs/*.pem "$DIR_DEST/etc/ssl/certs"
-	cp $ROOTDIR/$ARCH/etc/ssl/certs/*.crt "$DIR_DEST/etc/ssl/certs"
-	cp -ap $ROOTDIR/$ARCH/etc/ssl/certs/*.0 "$DIR_DEST/etc/ssl/certs"
-	cp $ROOTDIR/$ARCH/etc/ssl/certs/java/cacerts "$DIR_DEST/etc/ssl/certs/java"
+	mkdir -p "$DIR_DEST/etc/ssl/certs/java"
+	cp /etc/ssl/certs/*.pem "$DIR_DEST/etc/ssl/certs"
+	cp /etc/ssl/certs/*.crt "$DIR_DEST/etc/ssl/certs"
+	cp -ap /etc/ssl/certs/*.0 "$DIR_DEST/etc/ssl/certs"
+	cp /etc/ssl/certs/java/cacerts "$DIR_DEST/etc/ssl/certs/java"
 
 }
 install.entrypoint() {
-	install.binaries "/bin/bash"
-	ln -s "/bin/bash" "$DIR_DEST/bin/sh"
+	if [ ! -f "$DIR_DEST/bin/bash" ];then
+		install.binaries "/bin/bash"
+	fi
+	ln -sf "/bin/bash" "$DIR_DEST/bin/sh"
 	cat>"$DIR_DEST/start"<<ENDSTART
 #!/bin/bash
 SCRIPT_DIR=/start.d
@@ -752,7 +788,8 @@ install.upgrade() {
 }
 
 clean.install() {
-	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/etc/init.d" "$DIR_DEST/usr/share/locale"
+	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/usr/share/locale"
+	# "$DIR_DEST/etc/init.d" 
 }
 
 finish.default() {
@@ -872,7 +909,7 @@ create() {
 			[[ ${DMC_SRC_tmpt[$t]} != $TMPLT ]] && continue
 			n=${DMC_SRC_name[$t]}
 			is.function ${n}.verify && eval "src.${n}.verify() { ${n}.verify; }"
-			eval "src.$n() { DIR_SOURCE=\"$DIR_SOURCE\";TMPLT=\"$TMPLT\";$n; }"
+			eval "src.$n() { DIR_SOURCE=\"$DIR_SOURCE\";export GOPATH=\"$DIR_SOURCE\";TMPLT=\"$TMPLT\";$n; }"
 			task.add "src.$n" "${DMC_SRC_desc[$t]}"
 		done
 		for (( i=0; i<${#ARCHS[@]}; i++ ));do
@@ -881,7 +918,7 @@ create() {
 				# look for the build tasks of this template
 				[[ ${DMC_BLD_tmpt[$t]} != $TMPLT ]] && continue
 				n=${DMC_BLD_name[$t]}
-				eval "$ARCH.$n() { set.vars \"$ARCH\" \"$TMPLT\";$n; }"
+				eval "$ARCH.$n() { set.vars \"$ARCH\" \"$TMPLT\";set.env;$n; }"
 				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
 				task.add "$ARCH.$n" "${DMC_BLD_desc[$t]}"
 			done
@@ -976,8 +1013,8 @@ load.upload() {
 	done
 	echo "docker import $changes - ${TMPLT}:latest < $IMAGEDIR/$ARCH/$TMPLT.tar.gz"
 	cat "$IMAGEDIR/$ARCH/$TMPLT.tar.gz"| net.run "$DOCKERHOST" "docker import $changes - ${TMPLT}:latest"
-	net.run "$DOCKERHOST" docker tag ${TMPLT}:latest localhost:5000/${TMPLT}
-	net.run "$DOCKERHOST" docker push localhost:5000/${TMPLT}
+	net.run "$DOCKERHOST" docker tag ${TMPLT}:latest ${REPODOCKER}/${TMPLT}
+	net.run "$DOCKERHOST" docker push ${REPODOCKER}/${TMPLT}
 }
 
 load() {

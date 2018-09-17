@@ -13,7 +13,7 @@ kube.apply() {
 }
 
 kube.service() {
-	local name="$1" ip="$2" labels="${3:-""}" links="${4:-""}" namespace="${5:-"default"}"
+	local name="$1" ip="$2" labels="${3:-""}" links="${4:-""}" namespace="${5:-"$NAMESPACE"}"
 	local iptext=""
 	[ ! -z "$ip" ] && iptext="$(json.label clusterIP "$ip"),"
 	kube.apply <<ENDKUBE
@@ -34,8 +34,28 @@ kube.service() {
 }
 ENDKUBE
 }
+kube.balancer() {
+	local name="$1" labels="${2:-""}" links="${3:-""}" namespace="${4:-"$NAMESPACE"}"
+	kube.apply <<ENDKUBE
+{
+  "kind": "Service",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "$name",
+    "namespace": "$namespace",
+    "labels": { $labels }
+  },
+  "spec": {
+    "ports": [ $links ],
+    "selector": { $labels },
+    "type": "LoadBalancer"
+  }
+}
+ENDKUBE
+}
+
 kube.deploy() {
-	local name="$1" labels="$2" containers="$3" volumes=${4:-""}  namespace=${5:-"default"} 
+	local name="$1" labels="$2" containers="$3" volumes=${4:-""}  namespace=${5:-"$NAMESPACE"} 
 	kube.apply <<ENDKUBE
 {
   "kind": "Deployment",  "apiVersion": "extensions/v1beta1",
@@ -57,8 +77,53 @@ kube.deploy() {
 }
 ENDKUBE
 }
+kube.ns() {
+	local namespace=${1:-"$NAMESPACE"}
+	kube.apply <<ENDKUBE
+{
+  "kind": "Namespace",
+  "apiVersion": "v1",
+  "metadata": {
+    "name": "$namespace",
+    "labels": {
+      "name": "$namespace"
+    }
+  }
+}
+ENDKUBE
+}
+# https://sysdig.com/blog/ceph-persistent-volume-for-kubernetes-or-openshift/
+kube.claim() {
+	local name=$1 size=$2 namespace=${3:-"$NAMESPACE"}
+	net.run "$MASTER" kubectl apply -f - <<ENDF
+{
+  "kind": "PersistentVolumeClaim", "apiVersion": "v1",
+  "metadata": { "name": "$name", "namespace": "$namespace" },
+  "spec": {
+    "storageClassName": "rbd",
+    "accessModes": [ "ReadWriteOnce" ],
+    "resources": {"requests": { "storage": "$size" } }
+  }
+}
+ENDF
+}
+kube.claim.many() {
+	local name=$1 size=$2 namespace=${3:-"$NAMESPACE"}
+	net.run "$MASTER" kubectl apply -f - <<ENDF
+{
+  "kind": "PersistentVolumeClaim", "apiVersion": "v1",
+  "metadata": { "name": "$name", "namespace": "$namespace" },
+  "spec": {
+    "storageClassName": "cephfs",
+    "accessModes": [ "ReadWriteMany" ],
+    "resources": {"requests": { "storage": "$size" } }
+  }
+}
+ENDF
+}
+
 kube.configmap() {
-	local name="$1" data="$2" namespace=${3:-"default"} labels=$4
+	local name="$1" data="$2" namespace=${3:-"$NAMESPACE"} labels=$4
 	kube.apply <<ENDKUBE
 {
   "kind": "ConfigMap",  "apiVersion": "v1",
@@ -86,6 +151,13 @@ json.link() {
 	local port=$1
 	local target=${2:-"$1"} proto=${3:-"TCP"}
 	echo "{ \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
+}
+
+json.link.name() {
+	local name=$1
+	local port=$2
+	local target=${3:-"$2"} proto=${4:-"TCP"}
+	echo "{ \"name\": \"$name\",  \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
 }
 
 json.label() {
@@ -125,6 +197,10 @@ json.volume.config() {
 json.volume.host() {
 	json.pair.n "name" "$1" "hostPath" "$(json.pair "path" "$2" "type" "Directory")"
 }
+json.volume.claim() {
+	json.pair.n "name" "$1" "persistentVolumeClaim" "{ $(json.label "claimName" "$2") }"
+}
+
 json.volume.empty() {
 	json.pair.n "name" "$1" "emptyDir" "{}"
 }
@@ -142,5 +218,17 @@ deploy.default() {
 		LS=$(sed 's/^,//'<<<"$LS,${LINKS[$i]}")
 	done
 	[ -z "$NO_SERVICE" ] && kube.service "$CNAME" "$IP" "$LABELS" "$LS"
-	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"
+	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES" $NAMESPACE
+}
+
+deploy.public() {
+	LABELS="$(json.label "run" "$CNAME")"
+	for ((i=0;i<${#CONTAINERS[@]};i++));do
+		CONTS=$(sed 's/^,//'<<<"$CONTS,${CONTAINERS[$i]}")
+	done
+	for ((i=0;i<${#LINKS[@]};i++));do
+		LS=$(sed 's/^,//'<<<"$LS,${LINKS[$i]}")
+	done
+	[ -z "$NO_SERVICE" ] && kube.balancer "$CNAME" "$LABELS" "$LS"
+	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES" $NAMESPACE
 }
