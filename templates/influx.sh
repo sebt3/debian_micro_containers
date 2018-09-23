@@ -122,7 +122,7 @@ influx.deploy() {
 END
 )"
 	kube.configmap "influx" "$(json.label "influxdb.conf" "$content")" "$(json.label "run" "$CNAME")"
-	CONTAINERS+=("$(json.container "${CPREFIX}influx" "192.168.10.200:5000/$CNAME:latest" '"influx"' "$MOUNTS" "$(json.port 8086),$(json.port 8083)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}influx" "${REPODOCKER}/$CNAME:latest" '"influx"' "$MOUNTS" "$(json.port 8086),$(json.port 8083)")")
 	deploy.default
 }
 

@@ -67,7 +67,7 @@ mongo.deploy() {
 	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount mongo-data "/var/lib/mongodb")")
 	CNAME=${CNAME:-"mongo"}
 	LINKS+=("$(json.link 27017)")
-	CONTAINERS+=("$(json.container "${CPREFIX}mongodb" "192.168.10.200:5000/$CNAME:latest" '"mongodb"' "$MOUNTS" "$(json.port 27017)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}mongodb" "${REPODOCKER}/$CNAME:latest" '"mongodb"' "$MOUNTS" "$(json.port 27017)")")
 	deploy.default
 }
 

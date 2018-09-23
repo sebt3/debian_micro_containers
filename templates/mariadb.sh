@@ -64,7 +64,7 @@ maria.deploy() {
 	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount mysql-data "/var/lib/mysql")")
 	CNAME=${CNAME:-"mariadb"}
 	LINKS+=("$(json.link 3306)")
-	CONTAINERS+=("$(json.container "${CPREFIX}mariadb" "192.168.10.200:5000/$CNAME:latest" '"mariadb"' "$MOUNTS" "$(json.port 3306)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}mariadb" "${REPODOCKER}/$CNAME:latest" '"mariadb"' "$MOUNTS" "$(json.port 3306)")")
 	deploy.default
 }
 

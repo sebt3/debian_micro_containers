@@ -72,7 +72,7 @@ chronograf.deploy() {
 	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount chronograf-data "/var/run/chronograf")")
 	CNAME=${CNAME:-"chronograf"}
 	LINKS+=("$(json.link 80)")
-	CONTAINERS+=("$(json.container "${CPREFIX}chronograf" "192.168.10.200:5000/$CNAME:latest" '"chronograf"' "$MOUNTS" "$(json.port 80)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}chronograf" "${REPODOCKER}/$CNAME:latest" '"chronograf"' "$MOUNTS" "$(json.port 80)")")
 	deploy.public
 }
 

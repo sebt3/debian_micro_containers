@@ -113,7 +113,7 @@ telegraf.deployds() {
 	MOUNTS="$(json.mount.ro root "/rootfs"),$(json.mount.ro utmp "/var/run/utmp"),$(json.mount.ro sys "/rootfs/sys"),$(json.mount.ro proc "/rootfs/proc"),$(json.mount config "/etc/telegraf")" #,$(json.mount docker "/var/run/docker.sock")
 	ENVS="$(json.env "HOST_MOUNT_PREFIX" "/rootfs"),$(json.env "HOST_PROC" "/rootfs/proc"),$(json.env "HOST_SYS" "/rootfs/sys"),$(json.env.from "HOSTNAME" "spec.nodeName"),$(json.env.from "HOSTIP" "status.hostIP")"
 	CNAME=${CNAME:-"telegraf"}
-	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "192.168.10.200:5000/$CNAME:latest" '"telegraf"' "$MOUNTS" "" "$ENVS")"
+	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"' "$MOUNTS" "" "$ENVS")"
 	LABELS="$(json.label "run" "$CNAME")"
 	# TODO: ajouter docker et kubernetes
 	# https://github.com/influxdata/tick-charts/blob/master/telegraf-ds/templates/configmap.yaml
@@ -164,7 +164,7 @@ telegraf.deploy() {
 	MOUNTS="$(json.mount config "/etc/telegraf")"
 	ENVS="$(json.env "HOSTNAME" "telegraf-service")"
 	CNAME=${CNAME:-"telegraf"}
-	CONTS="$(json.container "${CPREFIX}telegraf" "192.168.10.200:5000/$CNAME:latest" '"telegraf"' "$MOUNTS" "" "$ENVS")"
+	CONTS="$(json.container "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"' "$MOUNTS" "" "$ENVS")"
 	LABELS="$(json.label "run" "$CNAME")"
 	local content="$( json.file <<END
 [agent]

@@ -71,7 +71,7 @@ pg.deploy() {
 	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount postgres-data "/var/lib/postgresql")")
 	CNAME=${CNAME:-"postgres"}
 	LINKS+=("$(json.link 5432)")
-	CONTAINERS+=("$(json.container "${CPREFIX}postgres" "192.168.10.200:5000/$CNAME:latest" '"postgres"' "$MOUNTS" "$(json.port 5432)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}postgres" "${REPODOCKER}/$CNAME:latest" '"postgres"' "$MOUNTS" "$(json.port 5432)")")
 	deploy.default
 }
 

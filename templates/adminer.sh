@@ -86,8 +86,8 @@ adminer.deploy() {
 	VOLUMES="$(json.volume.empty php-socket),$(json.volume.empty nginx-log)"
 	LINKS+=("$(json.link 80)")
 	#fluent
-	CONTAINERS+=("$(json.container "${CPREFIX}nginx" "192.168.10.200:5000/$CNAME:latest" '"nginx"' "$MOUNTS" "$(json.port 80)")")
-	CONTAINERS+=("$(json.container "${CPREFIX}php" "192.168.10.200:5000/$CNAME:latest"  '"php"' "$MOUNTS")")
+	CONTAINERS+=("$(json.container "${CPREFIX}nginx" "${REPODOCKER}/$CNAME:latest" '"nginx"' "$MOUNTS" "$(json.port 80)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}php" "${REPODOCKER}/$CNAME:latest"  '"php"' "$MOUNTS")")
 	deploy.public
 }
 

@@ -68,7 +68,7 @@ kapacitor.deploy() {
 	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount config "/etc/kapacitor"),$(json.mount kapacitor-data "/var/lib/kapacitor")")
 	CNAME=${CNAME:-"kapacitor"}
 	LINKS+=("$(json.link 9092)")
-	CONTAINERS+=("$(json.container "${CPREFIX}kapacitor" "192.168.10.200:5000/$CNAME:latest" '"kapacitor"' "$MOUNTS" "$(json.port 9092)")")
+	CONTAINERS+=("$(json.container "${CPREFIX}kapacitor" "${REPODOCKER}/$CNAME:latest" '"kapacitor"' "$MOUNTS" "$(json.port 9092)")")
 	local content="$( json.file <<END
 hostname = "kapacitor"
 data_dir = "/var/lib/kapacitor"
