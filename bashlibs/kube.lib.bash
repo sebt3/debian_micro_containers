@@ -77,6 +77,29 @@ kube.deploy() {
 }
 ENDKUBE
 }
+kube.ds() {
+	local name="$1" labels="$2" containers="$3" volumes=${4:-""}  namespace=${5:-"$NAMESPACE"} 
+	#cat <<ENDKUBE
+	kube.apply <<ENDKUBE
+{
+  "kind": "DaemonSet",  "apiVersion": "extensions/v1beta1",
+  "metadata": {
+    "name": "$name",
+    "namespace": "$namespace"
+  },
+  "spec": {
+    "selector": { "matchLabels": { $labels } },
+    "template": {
+      "metadata": { "labels": { $labels } },
+      "spec": {
+        "volumes": [ $volumes ],
+        "containers": [ $containers ]
+      }
+    }
+  }
+}
+ENDKUBE
+}
 kube.ns() {
 	local namespace=${1:-"$NAMESPACE"}
 	kube.apply <<ENDKUBE
@@ -123,13 +146,13 @@ ENDF
 }
 
 kube.configmap() {
-	local name="$1" data="$2" namespace=${3:-"$NAMESPACE"} labels=$4
+	local name="$1" data="$2" namespace=${4:-"$NAMESPACE"} labels=$3
 	kube.apply <<ENDKUBE
 {
   "kind": "ConfigMap",  "apiVersion": "v1",
   "metadata": {
     "name": "$name",
-    "namespace": "$namespace"
+    "namespace": "$namespace",
     "labels": { $labels }
   },
   "data": { $data }
@@ -147,6 +170,9 @@ kube.get.pod() {
 	net.run "$MASTER" kubectl get pod|awk -v R=$(kube.get.rs $1) '$1~R{print $1}'
 }
 
+json.file() {
+	sed 's/\\/\\\\/g'|sed 's/"/\\"/g'|sed -e :a -e '/$/N; s/\n/\\n/; ta'
+}
 json.link() {
 	local port=$1
 	local target=${2:-"$1"} proto=${3:-"TCP"}
@@ -171,6 +197,10 @@ json.pair() {
 json.env() {
 	json.pair name "$1" value "$2"
 }
+json.env.from() {
+	json.pair.n name "$1" valueFrom "{ \"fieldRef\": { $(json.label "fieldPath" "$2") } }"
+}
+
 json.port() {
 	echo "{ \"containerPort\": $1, $(json.label protocol "${2:-"TCP"}") }"
 }
@@ -180,6 +210,13 @@ json.container() {
 	[ ! -z "$cmd" ] && lcmd=", \"command\": [\"$cmd\"]"
 	[ ! -z "$args" ] && largs=", \"args\": [ $args ]"
 	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"volumeMounts\": [ $mounts ],  $(json.label imagePullPolicy "$policy") }"
+}
+json.syscontainer() {
+	local name=$1 image=$2 args=${3:-""} mounts=${4:-""} ports=${5:-""} env=${6:-""} cmd=${7:-""} policy=${8:-"Always"}
+	local lcmd="" largs=""
+	[ ! -z "$cmd" ] && lcmd=", \"command\": [\"$cmd\"]"
+	[ ! -z "$args" ] && largs=", \"args\": [ $args ]"
+	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"securityContext\": {\"privileged\": true}, \"volumeMounts\": [ $mounts ],  $(json.label imagePullPolicy "$policy") }"
 }
 json.pair.n() {
 	local n1=$1 v1=$2 n2=$3 v2=$4
@@ -196,6 +233,9 @@ json.volume.config() {
 }
 json.volume.host() {
 	json.pair.n "name" "$1" "hostPath" "$(json.pair "path" "$2" "type" "Directory")"
+}
+json.volume.hostFile() {
+	json.pair.n "name" "$1" "hostPath" "{ $(json.label "path" "$2") }"
 }
 json.volume.claim() {
 	json.pair.n "name" "$1" "persistentVolumeClaim" "{ $(json.label "claimName" "$2") }"

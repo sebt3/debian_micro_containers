@@ -30,7 +30,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ##############################################################################
 #@DESC@  influxDB
-#@GROUP@ sys
+#@GROUP@ monitor
 influx.source() {
 	source.go github.com/influxdata/influxdb
 }
@@ -46,9 +46,7 @@ influx.packages() {
 influx.build.verify() { task.verify.permissive; }
 influx.build() {
 	set.env
-	#mkdir -p $GOPATH/bin/linux_$GOARCH/
 	export CGO_ENABLED=0 GOOS=linux
-	##build.go github.com/influxdata/influxdb -a -ldflags \'-extldflags "-static"\' # -o $GOPATH/bin/linux_$GOARCH/influx-provisioner
 	cd $GOPATH/src/github.com/influxdata/influxdb
 	go clean ./...
 	go install ./...
@@ -62,30 +60,37 @@ influx.install() {
 
 influx.config() {
 	mkdir -p "$DIR_DEST/etc/influxdb"
-	cat >"$DIR_DEST/etc/influxdb/influxdb.conf" <<ENDF
+	cat >"$DIR_DEST/start.d/influx" <<ENDF
+exec /usr/bin/influxd
+ENDF
+}
+
+influx.deploy() {
+	kube.claim "${CPREFIX}influxdb" "${INFLUX_CLAIM_SIZE:-"100Gi"}"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "config" "influx"),$(json.volume.claim influx-data "${CPREFIX}influxdb")")
+	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount config "/etc/influxdb"),$(json.mount influx-data "/var/lib/influxdb")")
+	CNAME=${CNAME:-"influx"}
+	LINKS+=("$(json.link.name api 8086)")
+	LINKS+=("$(json.link.name admin 8083)")
+	IP=10.100.10.100
+	local content="$( json.file <<END
 [meta]
   dir = "/var/lib/influxdb/meta"
   retention-autocreate = true
   logging-enabled = true
-
 [data]
   dir = "/var/lib/influxdb/data"
   engine = "tsm1"
   wal-dir = "/var/lib/influxdb/wal"
   cache-max-memory-size = "300m"
   cache-snapshot-memory-size = "25m"
-
 [coordinator]
-
 [retention]
   enabled = true
-
 [shard-precreation]
-
 [monitor]
-  store-enabled = true
+  store-enabled = false
   store-database = "_internal"
-
 [http]
   enabled = true
   bind-address = ":8086"
@@ -94,50 +99,29 @@ influx.config() {
   log-enabled = false
   access-log-path  = "/var/log/influxdb/access.log"
   https-enabled = false
-  # https-certificate = "/etc/ssl/influxdb.pem"
-  # https-private-key = ""
-  # shared-secret = ""
-
 [logging]
   format = "auto"
   level = "info"
   suppress-logo = true
-
 [subscriber]
   enabled = true
-
 [[graphite]]
   enabled = false
   database = "graphite"
-
 [[collectd]]
   enabled = false
-
 [[opentsdb]]
   enabled = false
-
 [[udp]]
   enabled = false
-
 [continuous_queries]
   enabled = true
   log-enabled = false
   query-stats-enabled = true
   run-interval = "60s"
-
-ENDF
-	cat >"$DIR_DEST/start.d/influx" <<ENDF
-exec /usr/bin/influxd
-ENDF
-}
-
-influx.deploy() {
-	kube.claim "${CPREFIX}influxdb" "${MARIA_CLAIM_SIZE:-"50Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim influx-data "${CPREFIX}influxdb")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount influx-data "/var/lib/influxdb")")
-	CNAME=${CNAME:-"influx"}
-	LINKS+=("$(json.link.name api 8086)")
-	LINKS+=("$(json.link.name admin 8083)")
+END
+)"
+	kube.configmap "influx" "$(json.label "influxdb.conf" "$content")" "$(json.label "run" "$CNAME")"
 	CONTAINERS+=("$(json.container "${CPREFIX}influx" "192.168.10.200:5000/$CNAME:latest" '"influx"' "$MOUNTS" "$(json.port 8086),$(json.port 8083)")")
 	deploy.default
 }

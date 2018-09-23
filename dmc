@@ -338,7 +338,7 @@ setup.install() {
 			c="$c crossbuild-essential-${ARCHS[$i]}"
 		fi
 	done
-	out.cmd apt-get -y install debootstrap qemu binfmt-support qemu-user-static golang curl libpam0g-dev $c
+	out.cmd apt-get -y install debootstrap qemu binfmt-support qemu-user-static golang curl libpam0g-dev golang go-dep $c
 }
 setup.dirs() {
 	local i
