@@ -212,6 +212,9 @@ json.syscontainer() {
 container.add() {
 	CONTAINERS+=("$(json.container "$@")")
 }
+container.add.sys() {
+	CONTAINERS+=("$(json.syscontainer "$@")")
+}
 
 json.link() {
 	local port=$1

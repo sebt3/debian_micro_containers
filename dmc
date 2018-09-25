@@ -338,7 +338,7 @@ setup.install() {
 			c="$c crossbuild-essential-${ARCHS[$i]}"
 		fi
 	done
-	out.cmd apt-get -y install debootstrap qemu binfmt-support qemu-user-static golang curl libpam0g-dev golang go-dep $c
+	out.cmd apt-get -y aufs-tools install debootstrap qemu binfmt-support qemu-user-static golang curl libpam0g-dev golang go-dep $c
 }
 setup.dirs() {
 	local i
@@ -521,6 +521,7 @@ set.vars() {
 	DIR_SOURCE="$SOURCEDIR/$TMPLT"
 	DIR_BUILD="$BUILDDIR/$TMPLT/$ARCH"
 	DIR_DEST="$IMAGEDIR/$ARCH/$TMPLT"
+	[ -n "$BASE" ] && [ -d "$IMAGEDIR/$ARCH/$BASE" ] && DIR_BASE="$IMAGEDIR/$ARCH/$BASE"
 	GOPATH=$DIR_SOURCE
 	export TARGET_SYS GOARCH GOPATH
 }
@@ -549,6 +550,31 @@ build.copy.source() {
 	cp -Rapf "$DIR_SOURCE/$1/"* "$DIR_BUILD/$1"
 }
 
+install.empty() {
+	mkdir -p "$DIR_DEST"
+	rm -rf "$DIR_DEST/"*
+}
+install.init() {
+	install.empty
+	mkdir -p "$DIR_DEST/etc" "$DIR_DEST/tmp" "$DIR_DEST/var/tmp" "$DIR_DEST/start.d"
+	chmod 777 "$DIR_DEST/tmp" "$DIR_DEST/var/tmp"
+	cp "$ROOTDIR/$ARCH/etc/passwd" "$ROOTDIR/$ARCH/etc/nsswitch.conf" "$ROOTDIR/$ARCH/etc/group" "$IMAGEDIR/$ARCH/$TMPLT/etc/"
+}
+intall.aufs.mount() {
+	if [ -z "$DIR_BASE" ];then
+		out.error "Container directory for base \"$BASE\" not found"
+		return 1
+	fi
+	out.cmd mount -t aufs -o br="$DIR_DEST":"$DIR_BASE" none "$DIR_DEST"
+}
+intall.aufs.umount() {
+	mount |awk -vD="$DIR_DEST" -vR=1 'D==$3{R=0}END{exit R}'&& umount "$DIR_DEST"
+	rm -rf "$DIR_DEST/.wh..*" "$DIR_DEST/tmp"
+	cat>"$DIR_DEST/Dockerfile"<<ENDF
+FROM ${REPODOCKER}/$BASE:latest
+COPY . /
+ENDF
+}
 install.go() {
 	mkdir -p "$DIR_DEST/usr/bin"
 	cp -apvf "$GOPATH/bin/linux_$GOARCH/"* "$DIR_DEST/usr/bin"
@@ -566,13 +592,6 @@ install.container() {
 	fi
 	tar xf "$IMAGEDIR/$ARCH/$1.tar.gz" -C "$DIR_DEST"
 }
-install.init() {
-	mkdir -p "$DIR_DEST"
-	rm -rf "$DIR_DEST/"*
-	mkdir -p "$DIR_DEST/etc" "$DIR_DEST/tmp" "$DIR_DEST/var/tmp" "$DIR_DEST/start.d"
-	chmod 777 "$DIR_DEST/tmp" "$DIR_DEST/var/tmp"
-	cp "$ROOTDIR/$ARCH/etc/passwd" "$ROOTDIR/$ARCH/etc/nsswitch.conf" "$ROOTDIR/$ARCH/etc/group" "$IMAGEDIR/$ARCH/$TMPLT/etc/"
-}
 install.libc() {
 	mkdir -p "$DIR_DEST"
 	local TARGET_SYS
@@ -586,7 +605,7 @@ install.libc() {
 	mkdir -p "$DIR_DEST/lib/$TARGET_SYS"
 	cp -Rapf $ROOTDIR/$ARCH/lib/$TARGET_SYS/* "$DIR_DEST/lib/$TARGET_SYS"
 	cp -Rapf $ROOTDIR/$ARCH/lib/*.so.* "$DIR_DEST/lib"
-	for i in $(find $DIR_DEST/lib/$TARGET_SYS -name '*.so*');do 
+	for i in $(find $DIR_DEST/lib/$TARGET_SYS -name '*.so.*');do 
 		[ -h $i ] && continue
 		${TARGET_SYS}-strip $i
 	done
@@ -786,9 +805,15 @@ install.upgrade() {
 	install.umount /dev/pts
 	install.umount /dev
 }
+install.clean() {
+	{
+	export DEBIAN_FRONTEND=noninteractive
+	install.cmd.full apt-get clean
+	}
+}
 
 clean.install() {
-	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/usr/share/locale"
+	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/info" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/usr/share/locale"
 	# "$DIR_DEST/etc/init.d" 
 }
 
@@ -922,6 +947,10 @@ create() {
 				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
 				task.add "$ARCH.$n" "${DMC_BLD_desc[$t]}"
 			done
+			if [ -n "$BASE" ];then
+				eval "$ARCH.$TMPLT.aufs.mount() { set.vars \"$ARCH\" \"$TMPLT\";intall.aufs.mount; }"
+				task.add $ARCH.$TMPLT.aufs.mount      "Mount the base image ($BASE) for $TMPLT:$ARCH"
+			fi
 			for (( t=0; t<${#DMC_INS_name[@]}; t++ ));do
 				# look for the install tasks of this template
 				[[ ${DMC_INS_tmpt[$t]} != $TMPLT ]] && continue
@@ -936,6 +965,10 @@ create() {
 				task.add $ARCH.$TMPLT.install.tools      "Install the debuging tools in $TMPLT:$ARCH"
 			fi
 			f=0
+			if [ -n "$BASE" ];then
+				eval "$ARCH.$TMPLT.aufs.umount() { set.vars \"$ARCH\" \"$TMPLT\";intall.aufs.umount; }"
+				task.add $ARCH.$TMPLT.aufs.umount      "uMount the base image ($BASE) for $TMPLT:$ARCH"
+			fi
 			for (( t=0; t<${#DMC_CLN_name[@]}; t++ ));do
 				# look for the clean tasks of this template
 				[[ ${DMC_CLN_tmpt[$t]} != $TMPLT ]] && continue
@@ -959,7 +992,7 @@ create() {
 				is.function ${n}.verify && eval "$ARCH.${n}.verify() { ${n}.verify; }"
 				task.add "$ARCH.$n" "${DMC_FIN_desc[$t]}"
 			done
-			if [ $f -eq 0 ];then
+			if [ $f -eq 0 ] &&  [ -z "$BASE" ];then
 				eval "$ARCH.$TMPLT.finish.default() { set.vars \"$ARCH\" \"$TMPLT\";finish.default; }"
 				task.add $ARCH.$TMPLT.finish.default      "Default finish for $TMPLT:$ARCH"
 			fi
@@ -979,8 +1012,16 @@ create() {
 		for (( i=0; i<${#DOCKERARCH[@]}; i++ ));do
 			ARCH=${DOCKERARCH[$i]}
 			if [[ "$DELETE" != "Y" ]];then
-				eval "upload.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.upload; }"
+				if [ -n "$BASE" ];then
+					eval "upload.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.build; }"
+				else
+					eval "upload.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.upload; }"
+				fi
 				task.add upload.$ARCH.$TMPLT      "Load the tar for $TMPLT:$ARCH in the docker repo"
+				task.add load.push		"Upload the image to the repository"; 
+			
+				eval "push.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.upload; }"
+				task.add push.$ARCH.$TMPLT      "Push the image $TMPLT:$ARCH to the repository"
 			fi
 			[ -z "$MASTER" ] && continue
 			for (( t=0; t<${#DMC_DPL_name[@]}; t++ ));do
@@ -1005,21 +1046,31 @@ json.change() {
 	echo "$1 [$2]"
 }
 
-load.upload() {
+load.build() {
+	cat "$IMAGEDIR/$ARCH/$TMPLT.tar.gz"| net.run "$DOCKERHOST" "docker build -t ${REPODOCKER}/${TMPLT}:latest -"
+}
 
+load.upload() {
 	local i changes="--change '$(json.change ENTRYPOINT '"/start"')'"
 	for ((i=0;i<${#CHANGES[@]};i++));do
 		changes="$changes --change '${CHANGES[$i]}'"
 	done
 	echo "docker import $changes - ${TMPLT}:latest < $IMAGEDIR/$ARCH/$TMPLT.tar.gz"
-	cat "$IMAGEDIR/$ARCH/$TMPLT.tar.gz"| net.run "$DOCKERHOST" "docker import $changes - ${TMPLT}:latest"
-	net.run "$DOCKERHOST" docker tag ${TMPLT}:latest ${REPODOCKER}/${TMPLT}
+	cat "$IMAGEDIR/$ARCH/$TMPLT.tar.gz"| net.run "$DOCKERHOST" "docker import $changes - ${REPODOCKER}/${TMPLT}:latest"
+	#net.run "$DOCKERHOST" docker tag ${TMPLT}:latest ${REPODOCKER}/${TMPLT}
+}
+load.push() {
 	net.run "$DOCKERHOST" docker push ${REPODOCKER}/${TMPLT}
 }
 
 load() {
 	ARCH=${ARCHS[0]}
-	task.add load.upload		"Load the tar in a docker env"; 
+	if [ -n "$BASE" ];then
+		task.add load.build	"Build the image from the tar";
+	else
+		task.add load.upload	"Load the tar in a docker env";
+	fi
+	task.add load.push		"Upload the image to the repository"; 
 }
 act.add load "Load a container"
 
