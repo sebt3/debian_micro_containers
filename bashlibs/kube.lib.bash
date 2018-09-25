@@ -280,13 +280,13 @@ store.map() {
 	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "$alias" "$alias")")
 }
 store.claim.many() {
-	local alias=$1 mp=$2 claim="${3:-"${CPREFIX}${CNAME}"}" size=${4:-"1Gi"}
+	local alias=$1 mp=$2 size=${3:-"1Gi"} claim="${4:-"${CPREFIX}${CNAME}"}"
 	kube.claim.many "$claim" "$size"
 	mount.add "$alias" "$mp"
 	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim "$alias" "$claim")")
 }
 store.claim() {
-	local alias=$1 mp=$2 claim="${3:-"${CPREFIX}${CNAME}"}" size=${4:-"1Gi"}
+	local alias=$1 mp=$2 size=${3:-"1Gi"} claim="${4:-"${CPREFIX}${CNAME}"}"
 	kube.claim "$claim" "$size"
 	mount.add "$alias" "$mp"
 	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim "$alias" "$claim")")

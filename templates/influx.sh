@@ -118,12 +118,12 @@ END
 influx.deploy() {
 	CNAME=${CNAME:-"influx"}
 	CPREFIX=${CPREFIX:-"influx-"}
-	IP=10.100.10.101
-	link.add api 8086
-	link.add admin 8083
-	store.claim "${CPREFIX}data" "/var/lib/influxdb" "${CPREFIX}$CNAME" "${INFLUX_CLAIM_SIZE:-"100Gi"}"
-	store.map "${CPREFIX}config" "/etc/influxdb" "$(json.label "influxdb.conf" "$(file.influx.conf)")"
-	container.add "${CPREFIX}influx" "${REPODOCKER}/$CNAME:latest" '"influx"'
+	IP=10.100.10.100
+	link.add 	api			8086
+	link.add 	admin			8083
+	store.claim	"${CPREFIX}data"	"/var/lib/influxdb" "${INFLUX_CLAIM_SIZE:-"100Gi"}"
+	store.map	"${CPREFIX}config"	"/etc/influxdb" "$(json.label "influxdb.conf" "$(file.influx.conf)")"
+	container.add	"${CPREFIX}influx"	"${REPODOCKER}/$CNAME:latest" '"influx"'
 	deploy.default
 }
 

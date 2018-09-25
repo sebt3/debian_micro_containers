@@ -68,9 +68,10 @@ ENDF
 
 chronograf.deploy() {
 	CNAME=${CNAME:-"chronograf"}
-	link.add www 80
-	store.claim chronograf-data "/var/run/chronograf" "${CPREFIX}${CNAME}" "10Gi"
-	container.add "${CPREFIX}${CNAME}" "${REPODOCKER}/$CNAME:latest" '"chronograf"'
+	CPREFIX=${CPREFIX:-"chronograf-"}
+	link.add 	www			80
+	store.claim	${CPREFIX}data		"/var/run/chronograf" "10Gi"
+	container.add	"${CPREFIX}${CNAME}"	"${REPODOCKER}/$CNAME:latest" '"chronograf"'
 	deploy.public
 }
 

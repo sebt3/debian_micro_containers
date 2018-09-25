@@ -68,9 +68,9 @@ ENDF
 pg.deploy() {
 	CNAME=${CNAME:-"postgres"}
 	CPREFIX=${CPREFIX:-"postgres-"}
-	link.add data 5432
-	store.claim "${CPREFIX}data" "/var/lib/postgresql" "${CPREFIX}$CNAME" "${PG_CLAIM_SIZE:-"10Gi"}"
-	container.add "${CPREFIX}postgres" "${REPODOCKER}/$CNAME:latest" '"postgres"'
+	link.add	data			5432
+	store.claim	"${CPREFIX}data"	"/var/lib/postgresql" "${PG_CLAIM_SIZE:-"10Gi"}"
+	container.add	"${CPREFIX}postgres"	"${REPODOCKER}/$CNAME:latest" '"postgres"'
 	deploy.default
 }
 

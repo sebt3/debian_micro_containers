@@ -82,13 +82,13 @@ ENDCFG
 adminer.deploy() {
 	CNAME=${CNAME:-"adminer"}
 	CPREFIX=${CPREFIX:-"adminer-"}
-	link.add www 80
-	store.volatile php-socket "/run/php"
-	store.volatile nginx-log "/var/log/nginx"
+	link.add 	www			80
+	store.volatile	php-socket		"/run/php"
+	store.volatile	nginx-log		"/var/log/nginx"
 	#fluent
-	container.add "${CPREFIX}nginx" "${REPODOCKER}/$CNAME:latest" '"nginx"'
+	container.add	"${CPREFIX}nginx"	"${REPODOCKER}/$CNAME:latest" '"nginx"'
 	PORTS=""
-	container.add "${CPREFIX}php" "${REPODOCKER}/$CNAME:latest"  '"php"'
+	container.add	"${CPREFIX}php" 	"${REPODOCKER}/$CNAME:latest" '"php"'
 	deploy.public
 }
 

@@ -56,9 +56,9 @@ step.add.install jenkins.config		"Configure jenkins"
 jenkins.deploy() {
 	CNAME=${CNAME:-"jenkins"}
 	CPREFIX=${CPREFIX:-"jenkins-"}
-	link.add www 80
-	store.claim ${CPREFIX}data "/var/jenkins" "${CPREFIX}jenkins" "${JENKINS_CLAIM_SIZE:-"10Gi"}"
-	container.add "${CPREFIX}jenkins" "${REPODOCKER}/$CNAME:latest" '"jenkins"'
+	link.add 	www			80
+	store.claim	${CPREFIX}data		"/var/jenkins" "${JENKINS_CLAIM_SIZE:-"10Gi"}"
+	container.add	"${CPREFIX}jenkins" 	"${REPODOCKER}/$CNAME:latest" '"jenkins"'
 	deploy.public
 }
 

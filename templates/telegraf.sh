@@ -102,16 +102,16 @@ END
 telegraf.deployds() {
 	CNAME=${CNAME:-"telegraf"}
 	CPREFIX=${CPREFIX:-"telegraf-ds-"}
-	store.map "${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.ds)")"
-	store.file utmp "/var/run/utmp" "/var/run/utmp"
-	store.dir root "/rootfs" "/"
-	store.dir proc "/rootfs/proc" "/proc"
-	store.dir sys "/rootfs/sys" "/sys"
-	env.add "HOST_MOUNT_PREFIX" "/rootfs"
-	env.add "HOST_PROC" "/rootfs/proc"
-	env.add "HOST_SYS" "/rootfs/sys"
-	env.from "HOSTNAME" "spec.nodeName"
-	env.from "HOSTIP" "status.hostIP"
+	store.map	"${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.ds)")"
+	store.file	utmp "/var/run/utmp" "/var/run/utmp"
+	store.dir	root "/rootfs" "/"
+	store.dir	proc "/rootfs/proc" "/proc"
+	store.dir	sys "/rootfs/sys" "/sys"
+	env.add		"HOST_MOUNT_PREFIX" "/rootfs"
+	env.add		"HOST_PROC" "/rootfs/proc"
+	env.add		"HOST_SYS" "/rootfs/sys"
+	env.from	"HOSTNAME" "spec.nodeName"
+	env.from	"HOSTIP" "status.hostIP"
 	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"')"
 	LABELS="$(json.label "run" "$CNAME")"
 	kube.ds "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"
@@ -149,8 +149,8 @@ END
 telegraf.deploy() {
 	CNAME=${CNAME:-"telegraf"}
 	CPREFIX=${CPREFIX:-"telegraf-"}
-	store.map "${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.deploy)")"
-	env.add "HOSTNAME" "telegraf-service"
+	store.map	"${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.deploy)")"
+	env.add		"HOSTNAME" "telegraf-service"
 	CONTS="$(json.container "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"')"
 	LABELS="$(json.label "run" "$CNAME")"
 	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"

@@ -64,9 +64,9 @@ ENDF
 mongo.deploy() {
 	CNAME=${CNAME:-"mongo"}
 	CPREFIX=${CPREFIX:-"mongo-"}
-	link.add data 27017
-	store.claim "${CPREFIX}data" "/var/lib/mongodb" "${CPREFIX}$CNAME" "${MONGO_CLAIM_SIZE:-"10Gi"}"
-	container.add "${CPREFIX}mongodb" "${REPODOCKER}/$CNAME:latest" '"mongodb"'
+	link.add	data			27017
+	store.claim	"${CPREFIX}data"	"/var/lib/mongodb" "${MONGO_CLAIM_SIZE:-"10Gi"}"
+	container.add	"${CPREFIX}mongodb"	"${REPODOCKER}/$CNAME:latest" '"mongodb"'
 	deploy.default
 }
 

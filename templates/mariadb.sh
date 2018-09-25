@@ -61,9 +61,9 @@ ENDF
 maria.deploy() {
 	CNAME=${CNAME:-"mariadb"}
 	CPREFIX=${CPREFIX:-"mariadb-"}
-	link.add data 3306
-	store.claim "${CPREFIX}data" "/var/lib/mysql" "${CPREFIX}$CNAME" "${MARIA_CLAIM_SIZE:-"10Gi"}"
-	container.add "${CPREFIX}mariadb" "${REPODOCKER}/$CNAME:latest" '"mariadb"'
+	link.add 	data			3306
+	store.claim	"${CPREFIX}data"	"/var/lib/mysql" "${MARIA_CLAIM_SIZE:-"10Gi"}"
+	container.add	"${CPREFIX}mariadb"	"${REPODOCKER}/$CNAME:latest" '"mariadb"'
 	deploy.default
 }
 

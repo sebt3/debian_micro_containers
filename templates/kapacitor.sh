@@ -337,10 +337,10 @@ END
 kapacitor.deploy() {
 	CNAME=${CNAME:-"kapacitor"}
 	CPREFIX=${CPREFIX:-"kapacitor-"}
-	link.add admin 9092
-	store.claim "${CPREFIX}data" "/var/lib/kapacitor" "${CPREFIX}$CNAME" "${KAPACITOR_CLAIM_SIZE:-"10Gi"}"
-	store.map "${CPREFIX}config" "/etc/kapacitor" "$(json.label "kapacitor.conf" "$(file.kapacitor.conf)")"
-	container.add "${CPREFIX}kapacitor" "${REPODOCKER}/$CNAME:latest" '"kapacitor"'
+	link.add	admin			9092
+	store.claim	"${CPREFIX}data"	"/var/lib/kapacitor" "${KAPACITOR_CLAIM_SIZE:-"10Gi"}"
+	store.map	"${CPREFIX}config"	"/etc/kapacitor" "$(json.label "kapacitor.conf" "$(file.kapacitor.conf)")"
+	container.add	"${CPREFIX}kapacitor"	"${REPODOCKER}/$CNAME:latest" '"kapacitor"'
 	deploy.default
 }
 
