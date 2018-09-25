@@ -62,14 +62,8 @@ exec /usr/bin/kapacitord
 ENDF
 }
 
-kapacitor.deploy() {
-	kube.claim "${CPREFIX}kapacitor" "${MARIA_CLAIM_SIZE:-"10Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "config" "kapacitor"),$(json.volume.claim kapacitor-data "${CPREFIX}kapacitor")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount config "/etc/kapacitor"),$(json.mount kapacitor-data "/var/lib/kapacitor")")
-	CNAME=${CNAME:-"kapacitor"}
-	LINKS+=("$(json.link 9092)")
-	CONTAINERS+=("$(json.container "${CPREFIX}kapacitor" "${REPODOCKER}/$CNAME:latest" '"kapacitor"' "$MOUNTS" "$(json.port 9092)")")
-	local content="$( json.file <<END
+file.kapacitor.conf() {
+	json.file <<END
 hostname = "kapacitor"
 data_dir = "/var/lib/kapacitor"
 
@@ -338,8 +332,15 @@ data_dir = "/var/lib/kapacitor"
   ssl-server-name = ""
   insecure-skip-verify = false
 END
-)"
-	kube.configmap "kapacitor" "$(json.label "kapacitor.conf" "$content")" "$(json.label "run" "$CNAME")"
+}
+
+kapacitor.deploy() {
+	CNAME=${CNAME:-"kapacitor"}
+	CPREFIX=${CPREFIX:-"kapacitor-"}
+	link.add admin 9092
+	store.claim "${CPREFIX}data" "/var/lib/kapacitor" "${CPREFIX}$CNAME" "${KAPACITOR_CLAIM_SIZE:-"10Gi"}"
+	store.map "${CPREFIX}config" "/etc/kapacitor" "$(json.label "kapacitor.conf" "$(file.kapacitor.conf)")"
+	container.add "${CPREFIX}kapacitor" "${REPODOCKER}/$CNAME:latest" '"kapacitor"'
 	deploy.default
 }
 

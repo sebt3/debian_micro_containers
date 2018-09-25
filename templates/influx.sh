@@ -65,15 +65,8 @@ exec /usr/bin/influxd
 ENDF
 }
 
-influx.deploy() {
-	kube.claim "${CPREFIX}influxdb" "${INFLUX_CLAIM_SIZE:-"100Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "config" "influx"),$(json.volume.claim influx-data "${CPREFIX}influxdb")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount config "/etc/influxdb"),$(json.mount influx-data "/var/lib/influxdb")")
-	CNAME=${CNAME:-"influx"}
-	LINKS+=("$(json.link.name api 8086)")
-	LINKS+=("$(json.link.name admin 8083)")
-	IP=10.100.10.100
-	local content="$( json.file <<END
+file.influx.conf() {
+	json.file <<END
 [meta]
   dir = "/var/lib/influxdb/meta"
   retention-autocreate = true
@@ -120,9 +113,17 @@ influx.deploy() {
   query-stats-enabled = true
   run-interval = "60s"
 END
-)"
-	kube.configmap "influx" "$(json.label "influxdb.conf" "$content")" "$(json.label "run" "$CNAME")"
-	CONTAINERS+=("$(json.container "${CPREFIX}influx" "${REPODOCKER}/$CNAME:latest" '"influx"' "$MOUNTS" "$(json.port 8086),$(json.port 8083)")")
+}
+
+influx.deploy() {
+	CNAME=${CNAME:-"influx"}
+	CPREFIX=${CPREFIX:-"influx-"}
+	IP=10.100.10.101
+	link.add api 8086
+	link.add admin 8083
+	store.claim "${CPREFIX}data" "/var/lib/influxdb" "${CPREFIX}$CNAME" "${INFLUX_CLAIM_SIZE:-"100Gi"}"
+	store.map "${CPREFIX}config" "/etc/influxdb" "$(json.label "influxdb.conf" "$(file.influx.conf)")"
+	container.add "${CPREFIX}influx" "${REPODOCKER}/$CNAME:latest" '"influx"'
 	deploy.default
 }
 

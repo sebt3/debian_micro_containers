@@ -62,12 +62,11 @@ ENDF
 }
 
 mongo.deploy() {
-	kube.claim "${CPREFIX}mongodb" "${MONGO_CLAIM_SIZE:-"10Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim mongo-data "${CPREFIX}mongodb")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount mongo-data "/var/lib/mongodb")")
 	CNAME=${CNAME:-"mongo"}
-	LINKS+=("$(json.link 27017)")
-	CONTAINERS+=("$(json.container "${CPREFIX}mongodb" "${REPODOCKER}/$CNAME:latest" '"mongodb"' "$MOUNTS" "$(json.port 27017)")")
+	CPREFIX=${CPREFIX:-"mongo-"}
+	link.add data 27017
+	store.claim "${CPREFIX}data" "/var/lib/mongodb" "${CPREFIX}$CNAME" "${MONGO_CLAIM_SIZE:-"10Gi"}"
+	container.add "${CPREFIX}mongodb" "${REPODOCKER}/$CNAME:latest" '"mongodb"'
 	deploy.default
 }
 

@@ -53,71 +53,14 @@ telegraf.install() {
 }
 
 telegraf.config() {
-	cat >"$DIR_DEST/etc/telegraf/telegraf.conf" <<ENDF
-[global_tags]
-  ## Environment variables can be used as tags, and throughout the config file
-  # user = "\$USER"
-[agent]
-  interval = "10s"
-  round_interval = true
-  metric_batch_size = 1000
-  metric_buffer_limit = 10000
-  collection_jitter = "200ms"
-  flush_interval = "10s"
-  flush_jitter = "200ms"
-  quiet = true
-  logfile = ""
-  hostname = ""
-  omit_hostname = false
-
-[[outputs.influxdb]]
-  urls = ["http://10.100.10.100:8086"]
-  database = "telegraf"
-
-[[inputs.cpu]]
-  percpu = true
-  totalcpu = true
-  collect_cpu_time = false
-  report_active = false
-
-
-[[inputs.disk]]
-  ignore_fs = ["tmpfs", "devtmpfs", "devfs", "overlay", "aufs", "squashfs"]
-
-[[inputs.diskio]]
-
-[[inputs.kernel]]
-
-[[inputs.mem]]
-
-[[inputs.processes]]
-
-[[inputs.system]]
-
-[[inputs.kernel_vmstat]]
-
-[[inputs.linux_sysctl_fs]]
-
-[[inputs.netstat]]
-
-[[inputs.temp]]
-
-ENDF
 	cat >"$DIR_DEST/start.d/telegraf" <<ENDF
 exec /usr/bin/telegraf -config /etc/telegraf/telegraf.conf -config-directory /etc/telegraf/telegraf.d
 ENDF
 }
-
-telegraf.deployds() {
-	VOLUMES="$(json.volume.config "config" "telegraf-ds"),$(json.volume.hostFile "utmp" "/var/run/utmp"),$(json.volume.host "proc" "/proc"),$(json.volume.host "sys" "/sys"),$(json.volume.host "root" "/")"
-	MOUNTS="$(json.mount.ro root "/rootfs"),$(json.mount.ro utmp "/var/run/utmp"),$(json.mount.ro sys "/rootfs/sys"),$(json.mount.ro proc "/rootfs/proc"),$(json.mount config "/etc/telegraf")" #,$(json.mount docker "/var/run/docker.sock")
-	ENVS="$(json.env "HOST_MOUNT_PREFIX" "/rootfs"),$(json.env "HOST_PROC" "/rootfs/proc"),$(json.env "HOST_SYS" "/rootfs/sys"),$(json.env.from "HOSTNAME" "spec.nodeName"),$(json.env.from "HOSTIP" "status.hostIP")"
-	CNAME=${CNAME:-"telegraf"}
-	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"' "$MOUNTS" "" "$ENVS")"
-	LABELS="$(json.label "run" "$CNAME")"
+file.ds() {
 	# TODO: ajouter docker et kubernetes
 	# https://github.com/influxdata/tick-charts/blob/master/telegraf-ds/templates/configmap.yaml
-	local content="$( json.file <<END
+	json.file <<END
 [agent]
   interval = "10s"
   round_interval = true
@@ -154,19 +97,28 @@ telegraf.deployds() {
   bearer_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
   insecure_skip_verify = true
 END
-)"
-	kube.configmap "telegraf-ds" "$(json.label "telegraf.conf" "$content")" "$LABELS"
+}
+
+telegraf.deployds() {
+	CNAME=${CNAME:-"telegraf"}
+	CPREFIX=${CPREFIX:-"telegraf-ds-"}
+	store.map "${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.ds)")"
+	store.file utmp "/var/run/utmp" "/var/run/utmp"
+	store.dir root "/rootfs" "/"
+	store.dir proc "/rootfs/proc" "/proc"
+	store.dir sys "/rootfs/sys" "/sys"
+	env.add "HOST_MOUNT_PREFIX" "/rootfs"
+	env.add "HOST_PROC" "/rootfs/proc"
+	env.add "HOST_SYS" "/rootfs/sys"
+	env.from "HOSTNAME" "spec.nodeName"
+	env.from "HOSTIP" "status.hostIP"
+	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"')"
+	LABELS="$(json.label "run" "$CNAME")"
 	kube.ds "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"
 }
 
-telegraf.deploy() {
-	VOLUMES="$(json.volume.config "config" "telegraf")"
-	MOUNTS="$(json.mount config "/etc/telegraf")"
-	ENVS="$(json.env "HOSTNAME" "telegraf-service")"
-	CNAME=${CNAME:-"telegraf"}
-	CONTS="$(json.container "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"' "$MOUNTS" "" "$ENVS")"
-	LABELS="$(json.label "run" "$CNAME")"
-	local content="$( json.file <<END
+file.deploy() {
+	json.file <<END
 [agent]
   interval = "10s"
   round_interval = true
@@ -193,8 +145,14 @@ telegraf.deploy() {
 [[inputs.prometheus]]
   kubernetes_services = ["http://kube-state-metrics.kube-system:8080/metrics","http://heapster.kube-system/metrics"]
 END
-)"
-	kube.configmap "telegraf" "$(json.label "telegraf.conf" "$content")" "$LABELS"
+}
+telegraf.deploy() {
+	CNAME=${CNAME:-"telegraf"}
+	CPREFIX=${CPREFIX:-"telegraf-"}
+	store.map "${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.deploy)")"
+	env.add "HOSTNAME" "telegraf-service"
+	CONTS="$(json.container "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"')"
+	LABELS="$(json.label "run" "$CNAME")"
 	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"
 }
 

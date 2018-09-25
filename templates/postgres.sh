@@ -66,12 +66,11 @@ ENDF
 }
 
 pg.deploy() {
-	kube.claim "${CPREFIX}postgres" "${PG_CLAIM_SIZE:-"10Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim postgres-data "${CPREFIX}postgres")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount postgres-data "/var/lib/postgresql")")
 	CNAME=${CNAME:-"postgres"}
-	LINKS+=("$(json.link 5432)")
-	CONTAINERS+=("$(json.container "${CPREFIX}postgres" "${REPODOCKER}/$CNAME:latest" '"postgres"' "$MOUNTS" "$(json.port 5432)")")
+	CPREFIX=${CPREFIX:-"postgres-"}
+	link.add data 5432
+	store.claim "${CPREFIX}data" "/var/lib/postgresql" "${CPREFIX}$CNAME" "${PG_CLAIM_SIZE:-"10Gi"}"
+	container.add "${CPREFIX}postgres" "${REPODOCKER}/$CNAME:latest" '"postgres"'
 	deploy.default
 }
 

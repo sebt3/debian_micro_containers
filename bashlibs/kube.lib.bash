@@ -56,6 +56,7 @@ ENDKUBE
 
 kube.deploy() {
 	local name="$1" labels="$2" containers="$3" volumes=${4:-""}  namespace=${5:-"$NAMESPACE"} 
+	#cat <<ENDKUBE
 	kube.apply <<ENDKUBE
 {
   "kind": "Deployment",  "apiVersion": "extensions/v1beta1",
@@ -173,18 +174,6 @@ kube.get.pod() {
 json.file() {
 	sed 's/\\/\\\\/g'|sed 's/"/\\"/g'|sed -e :a -e '/$/N; s/\n/\\n/; ta'
 }
-json.link() {
-	local port=$1
-	local target=${2:-"$1"} proto=${3:-"TCP"}
-	echo "{ \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
-}
-
-json.link.name() {
-	local name=$1
-	local port=$2
-	local target=${3:-"$2"} proto=${4:-"TCP"}
-	echo "{ \"name\": \"$name\",  \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
-}
 
 json.label() {
 	local n=$1 v=$2
@@ -194,34 +183,61 @@ json.pair() {
 	local n1=$1 v1=$2 n2=$3 v2=$4
 	echo "{ $(json.label "$n1" "$v1"), $(json.label "$n2" "$v2") }"
 }
-json.env() {
-	json.pair name "$1" value "$2"
-}
-json.env.from() {
-	json.pair.n name "$1" valueFrom "{ \"fieldRef\": { $(json.label "fieldPath" "$2") } }"
-}
 
 json.port() {
 	echo "{ \"containerPort\": $1, $(json.label protocol "${2:-"TCP"}") }"
 }
+json.pair.n() {
+	local n1=$1 v1=$2 n2=$3 v2=$4
+	echo "{ $(json.label "$n1" "$v1"), \"$n2\": $v2 }"
+}
+json.change() {
+	echo "$1 [$2]"
+}
+
 json.container() {
-	local name=$1 image=$2 args=${3:-""} mounts=${4:-""} ports=${5:-""} env=${6:-""} cmd=${7:-""} policy=${8:-"Always"}
+	local name=$1 image=$2 args=${3:-""} mounts=${4:-"$MOUNTS"} ports=${5:-"$PORTS"} env=${6:-"$ENVS"} cmd=${7:-""} policy=${8:-"Always"}
 	local lcmd="" largs=""
 	[ ! -z "$cmd" ] && lcmd=", \"command\": [\"$cmd\"]"
 	[ ! -z "$args" ] && largs=", \"args\": [ $args ]"
 	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"volumeMounts\": [ $mounts ],  $(json.label imagePullPolicy "$policy") }"
 }
 json.syscontainer() {
-	local name=$1 image=$2 args=${3:-""} mounts=${4:-""} ports=${5:-""} env=${6:-""} cmd=${7:-""} policy=${8:-"Always"}
+	local name=$1 image=$2 args=${3:-""} mounts=${4:-"$MOUNTS"} ports=${5:-"$PORTS"} env=${6:-"$ENVS"} cmd=${7:-""} policy=${8:-"Always"}
 	local lcmd="" largs=""
 	[ ! -z "$cmd" ] && lcmd=", \"command\": [\"$cmd\"]"
 	[ ! -z "$args" ] && largs=", \"args\": [ $args ]"
 	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"securityContext\": {\"privileged\": true}, \"volumeMounts\": [ $mounts ],  $(json.label imagePullPolicy "$policy") }"
 }
-json.pair.n() {
-	local n1=$1 v1=$2 n2=$3 v2=$4
-	echo "{ $(json.label "$n1" "$v1"), \"$n2\": $v2 }"
+container.add() {
+	CONTAINERS+=("$(json.container "$@")")
 }
+
+json.link() {
+	local port=$1
+	local target=${2:-"$1"} proto=${3:-"TCP"}
+	echo "{ \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
+}
+json.link.name() {
+	local name=$1
+	local port=$2
+	local target=${3:-"$2"} proto=${4:-"TCP"}
+	echo "{ \"name\": \"$name\",  \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
+}
+link.add() {
+	PORTS=$(sed 's/^,//' <<<"$PORTS,$(json.port ${3:-"$2"})")
+	LINKS+=("$(json.link.name "$@")")
+}
+
+env.add() {
+	ENVS=$(sed 's/^,//' <<<"$ENVS,$(json.pair name "$1" value "$2")")
+}
+env.from() {
+	ENVS=$(sed 's/^,//' <<<"$ENVS,$(json.pair.n name "$1" valueFrom "{ \"fieldRef\": { $(json.label "fieldPath" "$2") } }")")
+}
+
+#####
+### Storage
 json.mount() {
 	json.pair name "$1" mountPath "$2"
 }
@@ -240,15 +256,59 @@ json.volume.hostFile() {
 json.volume.claim() {
 	json.pair.n "name" "$1" "persistentVolumeClaim" "{ $(json.label "claimName" "$2") }"
 }
-
 json.volume.empty() {
 	json.pair.n "name" "$1" "emptyDir" "{}"
 }
-json.change() {
-	echo "$1 [$2]"
+
+mount.add() {
+	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount "$1" "$2")")
+}
+mount.add.ro() {
+	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount.ro "$1" "$2")")
+
 }
 
+store.volatile() {
+	local alias=$1 mp=$2
+	mount.add "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.empty "$alias")")
+}
+store.map() {
+	local alias=$1 mp=$2 data=$3
+	kube.configmap "$alias" "$data" "$(json.label "run" "$CNAME")"
+	mount.add "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "$alias" "$alias")")
+}
+store.claim.many() {
+	local alias=$1 mp=$2 claim="${3:-"${CPREFIX}${CNAME}"}" size=${4:-"1Gi"}
+	kube.claim.many "$claim" "$size"
+	mount.add "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim "$alias" "$claim")")
+}
+store.claim() {
+	local alias=$1 mp=$2 claim="${3:-"${CPREFIX}${CNAME}"}" size=${4:-"1Gi"}
+	kube.claim "$claim" "$size"
+	mount.add "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim "$alias" "$claim")")
+}
+store.dir() {
+	local alias=$1 mp=$2 dir=$3
+	mount.add.ro  "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.host "$alias" "$dir")")
+}
+store.dir.rw() {
+	local alias=$1 mp=$2 dir=$3
+	mount.add "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.host "$alias" "$dir")")
+}
+store.file() {
+	local alias=$1 mp=$2 file=$3
+	mount.add.ro  "$alias" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.hostFile "$alias" "$file")")
+}
 
+#####
+### Standard Deployement
 deploy.default() {
 	LABELS="$(json.label "run" "$CNAME")"
 	for ((i=0;i<${#CONTAINERS[@]};i++));do

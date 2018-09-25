@@ -59,12 +59,11 @@ ENDF
 }
 
 maria.deploy() {
-	kube.claim "${CPREFIX}mariadb" "${MARIA_CLAIM_SIZE:-"10Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim mysql-data "${CPREFIX}mariadb")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount mysql-data "/var/lib/mysql")")
 	CNAME=${CNAME:-"mariadb"}
-	LINKS+=("$(json.link 3306)")
-	CONTAINERS+=("$(json.container "${CPREFIX}mariadb" "${REPODOCKER}/$CNAME:latest" '"mariadb"' "$MOUNTS" "$(json.port 3306)")")
+	CPREFIX=${CPREFIX:-"mariadb-"}
+	link.add data 3306
+	store.claim "${CPREFIX}data" "/var/lib/mysql" "${CPREFIX}$CNAME" "${MARIA_CLAIM_SIZE:-"10Gi"}"
+	container.add "${CPREFIX}mariadb" "${REPODOCKER}/$CNAME:latest" '"mariadb"'
 	deploy.default
 }
 

@@ -82,12 +82,13 @@ ENDCFG
 adminer.deploy() {
 	CNAME=${CNAME:-"adminer"}
 	CPREFIX=${CPREFIX:-"adminer-"}
-	MOUNTS="$(json.mount php-socket "/run/php"),$(json.mount nginx-log "/var/log/nginx")"
-	VOLUMES="$(json.volume.empty php-socket),$(json.volume.empty nginx-log)"
-	LINKS+=("$(json.link 80)")
+	link.add www 80
+	store.volatile php-socket "/run/php"
+	store.volatile nginx-log "/var/log/nginx"
 	#fluent
-	CONTAINERS+=("$(json.container "${CPREFIX}nginx" "${REPODOCKER}/$CNAME:latest" '"nginx"' "$MOUNTS" "$(json.port 80)")")
-	CONTAINERS+=("$(json.container "${CPREFIX}php" "${REPODOCKER}/$CNAME:latest"  '"php"' "$MOUNTS")")
+	container.add "${CPREFIX}nginx" "${REPODOCKER}/$CNAME:latest" '"nginx"'
+	PORTS=""
+	container.add "${CPREFIX}php" "${REPODOCKER}/$CNAME:latest"  '"php"'
 	deploy.public
 }
 

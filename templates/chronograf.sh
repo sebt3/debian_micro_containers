@@ -67,12 +67,10 @@ ENDF
 }
 
 chronograf.deploy() {
-	kube.claim "${CPREFIX}chronograf" "${MARIA_CLAIM_SIZE:-"10Gi"}"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim chronograf-data "${CPREFIX}chronograf")")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount chronograf-data "/var/run/chronograf")")
 	CNAME=${CNAME:-"chronograf"}
-	LINKS+=("$(json.link 80)")
-	CONTAINERS+=("$(json.container "${CPREFIX}chronograf" "${REPODOCKER}/$CNAME:latest" '"chronograf"' "$MOUNTS" "$(json.port 80)")")
+	link.add www 80
+	store.claim chronograf-data "/var/run/chronograf" "${CPREFIX}${CNAME}" "10Gi"
+	container.add "${CPREFIX}${CNAME}" "${REPODOCKER}/$CNAME:latest" '"chronograf"'
 	deploy.public
 }
 

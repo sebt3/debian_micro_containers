@@ -56,11 +56,9 @@ step.add.install jenkins.config		"Configure jenkins"
 jenkins.deploy() {
 	CNAME=${CNAME:-"jenkins"}
 	CPREFIX=${CPREFIX:-"jenkins-"}
-	kube.claim "${CPREFIX}jenkins" "${PGADMIN_CLAIM_SIZE:-"10Gi"}"
-	LINKS+=("$(json.link 80)")
-	MOUNTS=$(sed 's/^,//' <<<"$MOUNTS,$(json.mount jenkins-data "/var/jenkins")")
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.claim jenkins-data "${CPREFIX}jenkins")")
-	CONTAINERS+=("$(json.container "${CPREFIX}jenkins" "${REPODOCKER}/$CNAME:latest" '"jenkins"' "$MOUNTS" "$(json.port 80)")")
+	link.add www 80
+	store.claim ${CPREFIX}data "/var/jenkins" "${CPREFIX}jenkins" "${JENKINS_CLAIM_SIZE:-"10Gi"}"
+	container.add "${CPREFIX}jenkins" "${REPODOCKER}/$CNAME:latest" '"jenkins"'
 	deploy.public
 }
 
