@@ -35,18 +35,24 @@ kube.service() {
 ENDKUBE
 }
 kube.balancer() {
-	local name="$1" labels="${2:-""}" links="${3:-""}" namespace="${4:-"$NAMESPACE"}"
+	local name="$1" labels="${2:-""}" links="${3:-""}" namespace="${4:-"$NAMESPACE"}" anno="" lbip="" ip="$5"
+	if [ -n "$ip" ];then
+		lbip="\"loadBalancerIP\": \"$ip\","
+		anno="\"annotations\": { \"metallb.universe.tf/allow-shared-ip\": \"$ip\" },"
+	fi
 	kube.apply <<ENDKUBE
 {
   "kind": "Service",
   "apiVersion": "v1",
   "metadata": {
     "name": "$name",
+    $anno
     "namespace": "$namespace",
     "labels": { $labels }
   },
   "spec": {
     "ports": [ $links ],
+    $lbip
     "selector": { $labels },
     "type": "LoadBalancer"
   }
@@ -184,9 +190,6 @@ json.pair() {
 	echo "{ $(json.label "$n1" "$v1"), $(json.label "$n2" "$v2") }"
 }
 
-json.port() {
-	echo "{ \"containerPort\": $1, $(json.label protocol "${2:-"TCP"}") }"
-}
 json.pair.n() {
 	local n1=$1 v1=$2 n2=$3 v2=$4
 	echo "{ $(json.label "$n1" "$v1"), \"$n2\": $v2 }"
@@ -216,6 +219,9 @@ container.add.sys() {
 	CONTAINERS+=("$(json.syscontainer "$@")")
 }
 
+json.port() {
+	echo "{ \"containerPort\": $1, $(json.label protocol "${2:-"TCP"}") }"
+}
 json.link() {
 	local port=$1
 	local target=${2:-"$1"} proto=${3:-"TCP"}
@@ -228,8 +234,19 @@ json.link.name() {
 	echo "{ \"name\": \"$name\",  \"port\": $port, \"targetPort\": $target, $(json.label "protocol" "$proto") }"
 }
 link.add() {
-	PORTS=$(sed 's/^,//' <<<"$PORTS,$(json.port ${3:-"$2"})")
+	PORTS=$(sed 's/^,//' <<<"$PORTS,$(json.port ${3:-"$2"} $4)")
 	LINKS+=("$(json.link.name "$@")")
+}
+link.add.udp() {
+	LINK_USE_BOTH=1
+	PORTS=$(sed 's/^,//' <<<"$PORTS,$(json.port ${3:-"$2"} UDP)")
+	LINKSUDP+=("$(json.link.name "$1" "$2" "${3:-"$2"}" UDP)")
+}
+link.add.both() {
+	LINK_USE_BOTH=1
+	PORTS=$(sed 's/^,//' <<<"$PORTS,$(json.port ${3:-"$2"}),$(json.port ${3:-"$2"} UDP)")
+	LINKS+=("$(json.link.name "$1" "$2" "${3:-"$2"}")")
+	LINKSUDP+=("$(json.link.name "$1" "$2" "${3:-"$2"}" UDP)")
 }
 
 env.add() {
@@ -332,6 +349,14 @@ deploy.public() {
 	for ((i=0;i<${#LINKS[@]};i++));do
 		LS=$(sed 's/^,//'<<<"$LS,${LINKS[$i]}")
 	done
+	if [ ${LINK_USE_BOTH:-0} -eq 1 ] && [ -n "$1" ];then
+		for ((i=0;i<${#LINKSUDP[@]};i++));do
+			LS2=$(sed 's/^,//'<<<"$LS2,${LINKSUDP[$i]}")
+		done
+		kube.balancer "udp$CNAME" "$LABELS" "$LS2" "$NAMESPACE" "$1"
+		kube.balancer "$CNAME" "$LABELS" "$LS" "$NAMESPACE" "$1"
+	else
 	[ -z "$NO_SERVICE" ] && kube.balancer "$CNAME" "$LABELS" "$LS"
+	fi
 	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES" $NAMESPACE
 }

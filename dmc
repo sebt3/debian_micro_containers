@@ -813,6 +813,7 @@ install.clean() {
 }
 
 clean.install() {
+	rm -f "$DIR_DEST/var/log/*.log"  "$DIR_DEST/var/log/apt/*"
 	rm -rf "$DIR_DEST/usr/share/man" "$DIR_DEST/usr/share/info" "$DIR_DEST/usr/share/bug" "$DIR_DEST/usr/share/doc" "$DIR_DEST/usr/share/locale"
 	# "$DIR_DEST/etc/init.d" 
 }
@@ -1018,9 +1019,7 @@ create() {
 					eval "upload.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.upload; }"
 				fi
 				task.add upload.$ARCH.$TMPLT      "Load the tar for $TMPLT:$ARCH in the docker repo"
-				task.add load.push		"Upload the image to the repository"; 
-			
-				eval "push.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.upload; }"
+				eval "push.$ARCH.$TMPLT() { set.vars \"$ARCH\" \"$TMPLT\";load.push; }"
 				task.add push.$ARCH.$TMPLT      "Push the image $TMPLT:$ARCH to the repository"
 			fi
 			[ -z "$MASTER" ] && continue
