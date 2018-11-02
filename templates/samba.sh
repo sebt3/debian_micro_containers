@@ -39,6 +39,7 @@ samba.empty() {
 
 samba.install() {
 	local r
+	install.update
 	install.install samba samba-dsdb-modules samba-vfs-modules libcephfs1 glusterfs-common winbind dnsutils net-tools krb5-user krb5-config libpam-winbind libnss-winbind smbclient
 	r=$?
 	rm -f "$DIR_DEST/etc/samba/smb.conf"
@@ -107,7 +108,12 @@ if [ ! -f /var/lib/samba/config/smb.conf ] || [ ! -f /var/lib/samba/private/krb5
         rpc server dynamic port range = 49152-49159
         log file = /dev/stdout
         multicast dns register = no
+        ldap server require strong auth = no
         cluster addresses = \${SMBIP:-"192.168.9.240"}
+	tls enabled  = yes
+	tls keyfile  = tls/tls.key
+	tls certfile = tls/tls.crt
+	tls cafile   = tls/ca.crt
 
 [netlogon]
         path = /var/lib/samba/sysvol/\$SAMBA_REALM/scripts
@@ -159,6 +165,7 @@ samba.deploy() {
 	env.add		SMBIP			$IP
 	env.add		SBMHOST			ad
 	store.claim	"${CPREFIX}data"	"/var/lib/samba" "${SAMBA_CLAIM_SIZE:-"50Gi"}"
+	#store.cert	"samba"			"ca-issuer" "ad.home.local" "/var/lib/samba/private"
 	container.add.sys "${CPREFIX}samba"	"${REPODOCKER}/$CNAME:latest" '"samba"'
 	deploy.public "$IP"
 }
@@ -177,7 +184,9 @@ step.add.deploy  samba.deploy  		"Deploy Samba DC to kubernetes"
 # samba-tool domain passwordsettings set --min-pwd-age=0
 # samba-tool domain passwordsettings set --max-pwd-age=0
 # samba-tool domain passwordsettings set --min-pwd-length=0
-# samba-tool user create seb password
+# samba-tool user create seb password --mail-address=seb@home.local
+# samba-tool user create vmail mailSystem
+
 
 #### Ajout d'entrée dans le DNS
 # samba-tool dns add "$EXT" "$REALM" dolimanue A 192.168.9.230 -U administrator -P

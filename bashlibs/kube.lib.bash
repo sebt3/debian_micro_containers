@@ -6,12 +6,37 @@ ADDONS=()
 CONTAINERS=()
 LINKS=()
 kube.apply() {
+	#cat;return
 	case $DELETE in
 	Y)	net.run "$MASTER" kubectl delete -f -;;
 	*)	net.run "$MASTER" kubectl apply -f -;;
 	esac
 }
-
+kube.cert() {
+	local name="$1" issuer="$2" cn="${3:-""}" sn="${4:-"${1}-tls"}" dn="${5:-"\"$cn\""}" namespace="${6:-"$NAMESPACE"}"
+	kube.apply <<ENDKUBE
+{
+    "apiVersion": "certmanager.k8s.io/v1alpha1",
+    "kind": "Certificate",
+    "metadata": {
+        "name": "$name",
+        "namespace": "$namespace"
+    },
+    "spec": {
+        "commonName": "$cn",
+        "dnsNames": [ $dn ],
+        "issuerRef": {
+            "kind": "Issuer",
+            "name": "$issuer"
+        },
+        "organization": [
+            "Example CA"
+        ],
+        "secretName": "$sn"
+    }
+}
+ENDKUBE
+}
 kube.service() {
 	local name="$1" ip="$2" labels="${3:-""}" links="${4:-""}" namespace="${5:-"$NAMESPACE"}"
 	local iptext=""
@@ -264,8 +289,11 @@ json.mount() {
 json.mount.ro() {
 	echo "{ \"name\": \"$1\", \"mountPath\": \"$2\", \"readOnly\": true }"
 }
+json.volume.secret() {
+	json.pair.n "name" "$1" "secret" "$(json.pair.n "secretName" "${2:-"$1"}" "defaultMode" 420)"
+}
 json.volume.config() {
-	json.pair.n "name" "$1" "configMap" "$(json.pair.n "name" "$2" "defaultMode" 420)"
+	json.pair.n "name" "$1" "configMap" "$(json.pair.n "name" "${2:-"$1"}" "defaultMode" 420)"
 }
 json.volume.host() {
 	json.pair.n "name" "$1" "hostPath" "$(json.pair "path" "$2" "type" "Directory")"
@@ -288,6 +316,13 @@ mount.add.ro() {
 
 }
 
+store.cert() {
+	local name="$1" issuer="$2" cn="${3:-""}" mp="${4:-""}" sn="${5:-"${1}-tls"}" dn="${6:-"\"$cn\""}" namespace="${7:-"$NAMESPACE"}"
+	echo kube.cert "$name" "$issuer" "$cn" "$sn" "$dn" "$namespace"
+	kube.cert "$name" "$issuer" "$cn" "$sn" "$dn" "$namespace"
+	mount.add "$sn" "$mp"
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.secret "$sn")")
+}
 store.volatile() {
 	local alias=$1 mp=$2
 	mount.add "$alias" "$mp"
@@ -297,7 +332,7 @@ store.map() {
 	local alias=$1 mp=$2 data=$3
 	kube.configmap "$alias" "$data" "$(json.label "run" "$CNAME")"
 	mount.add "$alias" "$mp"
-	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "$alias" "$alias")")
+	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "$alias")")
 }
 store.claim.many() {
 	local alias=$1 mp=$2 size=${3:-"1Gi"} claim="${4:-"${CPREFIX}${CNAME}"}"
