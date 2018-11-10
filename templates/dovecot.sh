@@ -32,6 +32,14 @@
 #@DESC@  dovecot email server
 #@GROUP@ app
 
+# maildirmake.dovecot /etc/skel/mail
+# maildirmake.dovecot /etc/skel/mail/.Drafts
+# maildirmake.dovecot /etc/skel/mail/.Sent
+# maildirmake.dovecot /etc/skel/mail/.Trash
+# maildirmake.dovecot /etc/skel/mail/.Templates
+
+
+
 BASE=buster
 dovecot.empty() {
 	install.empty
@@ -54,8 +62,8 @@ default_realm = HOME.LOCAL
 
 [realms]
 HOME.LOCAL = {
-  kdc = ad.home.local
-  admin_server = ad.home.local
+  kdc = samba
+  admin_server = samba
 }
 
 [domain_realm]
@@ -74,7 +82,7 @@ ENDF
   dns proxy = no
   idmap uid = 10000-20000
   idmap gid = 10000-20000
-  password server = ad.home.local
+  password server = samba
   encrypt passwords = yes
   use kerberos keytab = true
   winbind use default domain = yes
@@ -90,7 +98,18 @@ dnpass				= mailSystem
 base				= cn=Users,dc=home,dc=local
 pass_filter			= (cn=%n)
 user_filter			= (cn=%n)
-user_attrs			= cn=home=/var/spool/dovecot/%$
+user_attrs			= cn=home=/home/vmail/%$
+ENDF
+	cat >"$DIR_DEST/etc/dovecot/conf.d/10-mail.conf" <<ENDF
+namespace inbox {
+  inbox = yes
+  list = yes
+  subscriptions = yes
+}
+
+mail_privileged_group = mail
+protocol !indexer-worker {
+}
 ENDF
 	cat >"$DIR_DEST/etc/dovecot/conf.d/10-master.conf" <<ENDF
 service imap-login {
@@ -158,13 +177,36 @@ passdb {
 }
 userdb {
    driver=static
-   args = uid=501 gid=501 home=/home/vmail/%1Ln/%Ln mail=maildir:/home/vmail/%d/%1Ln/%Ln:INBOX=/home/vmail/%d/%1Ln/%Ln allow_all_users=yes
+   args = uid=501 gid=501 home=/home/vmail/%Ln mail=maildir:/home/vmail/%Ln/mail allow_all_users=yes
 }
 ENDF
 	cat >"$DIR_DEST/etc/dovecot/conf.d/10-ssl.conf" <<ENDF
 ssl = yes
 ssl_cert = </etc/dovecot/ssl/tls.crt
 ssl_key = </etc/dovecot/ssl/tls.key
+ENDF
+	cat >"$DIR_DEST/etc/dovecot/conf.d/15-mailboxes.conf" <<ENDF
+namespace inbox {
+  mailbox Drafts {
+    special_use = \Drafts
+    auto = subscribe
+  }
+  mailbox Junk {
+    special_use = \Junk
+    auto = subscribe
+  }
+  mailbox Trash {
+    special_use = \Trash
+    auto = subscribe
+  }
+  mailbox Sent {
+    special_use = \Sent
+    auto = subscribe
+  }
+  mailbox "Sent Messages" {
+    special_use = \Sent
+  }
+}
 ENDF
 	cat >"$DIR_DEST/etc/dovecot/dovecot.conf" <<ENDF
 !include_try /usr/share/dovecot/protocols.d/*.protocol
@@ -191,8 +233,8 @@ default_realm = HOME.LOCAL
 
 [realms]
 HOME.LOCAL = {
-  kdc = ad.home.local
-  admin_server = ad.home.local
+  kdc = samba
+  admin_server = samba
 }
 
 [domain_realm]
@@ -213,7 +255,7 @@ dovecot.conf.smb() {
   dns proxy = no
   idmap uid = 10000-20000
   idmap gid = 10000-20000
-  password server = ad.home.local
+  password server = samba
   encrypt passwords = yes
   use kerberos keytab = true
   winbind use default domain = yes
@@ -231,7 +273,7 @@ dnpass = mailSystem
 base = cn=Users,dc=home,dc=local
 pass_filter = (cn=%n)
 user_filter = (cn=%n)
-user_attrs = cn=home=/var/spool/dovecot/%$
+user_attrs = cn=home=/home/vmail/%$
 ENDF
 }
 
