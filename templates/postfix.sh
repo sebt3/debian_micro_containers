@@ -91,14 +91,15 @@ smtpd_tls_key_file=/etc/postfix/ssl/tls.key
 smtpd_use_tls=yes
 smtpd_tls_session_cache_database = btree:\${data_directory}/smtpd_scache
 smtp_tls_session_cache_database = btree:\${data_directory}/smtp_scache
-smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated reject_unauth_destination
+smtpd_recipient_restrictions= permit_sasl_authenticated,permit_mynetworks,reject_unauth_destination,reject_unknown_sender_domain,reject_rbl_client zen.spamhaus.org,reject_rbl_client bl.spamcop.net,reject_rbl_client cbl.abuseat.org
 myhostname = smtp.home.local
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 myorigin = /etc/mailname
 mydestination = localhost, \$myhostname, \$mydomain
 relayhost = 
-mynetworks = 127.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
+mynetworks = 127.0.0.0/8 10.0.0.0/8 [::ffff:127.0.0.0]/104 [::1]/128
 mailbox_size_limit = 0
 recipient_delimiter = +
 inet_interfaces = all
@@ -183,12 +184,12 @@ postfix.deploy() {
 	store.map	"${CPREFIX}config"	"/etc/container" "$(json.label "people.ldap" "$(postfix.conf.ldap)")"
 	store.cert	"postfix"		"ca-issuer" "imap.home.local" "/etc/postfix/ssl"
  	store.claim	"${CPREFIX}data"	"/var/spool" "${POSTFIX_CLAIM_SIZE:-"10Gi"}"
-	container.add	"${CPREFIX}postfix"	"${REPODOCKER}/$CNAME:latest" '"postfix"'
+	container.add	"${CPREFIX}postfix"	"${REPODOCKER}/$CNAME:latest" '"postfix"' "$(json.res "050m" "30Mi")"
 	deploy.public
 }
 
 step.add.build   postfix.empty		"Cleanup the postfix layer"
 step.add.install postfix.install	"Install postfix"
 step.add.install postfix.config		"Configure postfix"
-step.add.deploy  postfix.deploy  	"Deploy Dovecot to kubernetes"
+step.add.deploy  postfix.deploy  	"Deploy postfix to kubernetes"
 
