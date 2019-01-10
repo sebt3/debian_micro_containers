@@ -38,16 +38,8 @@ samba.empty() {
 }
 
 samba.install() {
-	local r
 	install.update
-	install.install samba samba-dsdb-modules samba-vfs-modules libcephfs1 glusterfs-common winbind dnsutils net-tools krb5-user krb5-config libpam-winbind libnss-winbind smbclient
-	r=$?
-	rm -f "$DIR_DEST/etc/samba/smb.conf"
-	rm -rf "$DIR_DEST/var/run/samba" "$DIR_DEST/var/cache/samba"
-	ln -sf /var/lib/samba/run "$DIR_DEST/var/run/samba"
-	ln -sf /var/lib/samba/cache "$DIR_DEST/var/cache/samba"
-	ln -sf /var/lib/samba/config/smb.conf "$DIR_DEST/etc/samba/smb.conf"
-	return $r
+	install.install samba samba-dsdb-modules samba-vfs-modules winbind dnsutils net-tools krb5-user krb5-config libpam-winbind libnss-winbind smbclient
 }
 
 samba.config() {
@@ -96,10 +88,11 @@ if [ ! -f /var/lib/samba/config/smb.conf ] || [ ! -f /var/lib/samba/private/krb5
 	SAMBA_PASSWORD=\${SAMBA_PASSWORD:-'Passw0rd'}
 	SAMBA_REALM=\${SAMBA_REALM:-'home.local'}
 	SAMBA_DOMAIN=\${SAMBA_DOMAIN:-"\${SAMBA_REALM%%.*}"}
-	/usr/bin/samba-tool domain provision --use-rfc2307 "--domain=\$SAMBA_DOMAIN" "--realm=\$SAMBA_REALM" --server-role=dc "--adminpass=\$SAMBA_PASSWORD" --dns-backend=SAMBA_INTERNAL
+	/usr/bin/samba-tool domain provision --use-rfc2307 "--domain=\$SAMBA_DOMAIN" "--realm=\$SAMBA_REALM" --server-role=dc "--adminpass=\$SAMBA_PASSWORD" --dns-backend=SAMBA_INTERNAL --host-ip \${SMBIP:-"192.168.9.240"}
 	cat >/etc/samba/smb.conf <<ENDCFG
 [global]
-        dns forwarder = \$(awk '/nameserver/{print \$2}'</etc/resolv.conf)
+        #dns forwarder = \$(awk '/nameserver/{print \$2}'</etc/resolv.conf)
+        dns forwarder = 8.8.8.8
         netbios name = \$(upper <<<"\$H")
         realm = \$(upper <<<"\$SAMBA_REALM")
         server role = active directory domain controller
@@ -136,6 +129,11 @@ fi
 cp /var/lib/samba/private/krb5.conf /etc
 exec /usr/sbin/samba --foreground --no-process-group
 ENDF
+	ln -sf /var/lib/samba/run "$DIR_DEST/var/run/samba"
+	ln -sf /var/lib/samba/cache "$DIR_DEST/var/cache/samba"
+	ln -sf /var/lib/samba/config/smb.conf "$DIR_DEST/etc/samba/smb.conf"
+	rm -f "$DIR_DEST/etc/samba/smb.conf" "$DIR_DEST/var/lib/samba/private/msg.sock/*"
+	rm -rf "$DIR_DEST/var/run/samba" "$DIR_DEST/var/cache/samba"
 }
 
 samba.deploy() {
@@ -166,7 +164,7 @@ samba.deploy() {
 	env.add		SBMHOST			ad
 	store.claim	"${CPREFIX}data"	"/var/lib/samba" "${SAMBA_CLAIM_SIZE:-"50Gi"}"
 	#store.cert	"samba"			"ca-issuer" "ad.home.local" "/var/lib/samba/private"
-	container.add.sys "${CPREFIX}samba"	"${REPODOCKER}/$CNAME:latest" '"samba"'
+	container.add.sys "${CPREFIX}samba"	"${REPODOCKER}/$CNAME:latest" '"samba"' "$(json.res "300m" "300Mi")"
 	deploy.public "$IP"
 }
 
@@ -189,9 +187,14 @@ step.add.deploy  samba.deploy  		"Deploy Samba DC to kubernetes"
 
 
 #### Ajout d'entrée dans le DNS
-# samba-tool dns add "$EXT" "$REALM" dolimanue A 192.168.9.230 -U administrator -P
-# samba-tool dns add "$EXT" "$REALM" imap A 192.168.9.232 -U administrator -P
-# samba-tool dns add "$EXT" "$REALM" smtp A 192.168.9.234 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" task A 192.168.9.224 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" doliseb A 192.168.9.221 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" dolimanue A 192.168.9.222 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" imap A 192.168.9.225 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" smtp A 192.168.9.226 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" mail A 192.168.9.227 -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" autodiscover CNAME mail.home.local -U administrator -P
+# samba-tool dns add "$EXT" "$REALM" autoconfig CNAME mail.home.local -U administrator -P
 # samba-tool dns add "$EXT" "$REALM" "$REALM" MX "smtp.home.local 10" -U administrator -P
 
 
