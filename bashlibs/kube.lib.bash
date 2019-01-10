@@ -79,6 +79,7 @@ kube.balancer() {
     "ports": [ $links ],
     $lbip
     "selector": { $labels },
+    "externalTrafficPolicy": "Local",
     "type": "LoadBalancer"
   }
 }
@@ -223,19 +224,38 @@ json.change() {
 	echo "$1 [$2]"
 }
 
+json.res() {
+	local reqCpu=$1 reqMem=$2 limCpu=$3 limMem=$4
+	local req="" lim="" res=""
+	[ -n "$reqCpu" ] && req="\"cpu\": \"$reqCpu\""
+	[ -n "$reqCpu" ] && [ -n "$reqMem" ] && req="$req, "
+	[ -n "$reqMem" ] && req="$req\"memory\": \"$reqMem\""
+	[ -n "$limCpu" ] && lim="\"cpu\": \"$limCpu\""
+	[ -n "$limCpu" ] && [ -n "$limMem" ] && lim="$lim, "
+	[ -n "$limMem" ] && lim="$lim\"memory\": \"$limMem\""
+	if [ -n "$req" ] && [ -n "$lim" ];then
+		res="\"requests\": { $req }, \"limits\": { $lim }"
+	elif [ -n "$req" ];then 
+		res="\"requests\": { $req }"
+	elif [ -n "$lim" ];then
+		res="\"limits\": { $lim }"
+	fi
+	[ -n "$res" ] && echo "\"resources\": { $res },"
+}
+
 json.container() {
-	local name=$1 image=$2 args=${3:-""} mounts=${4:-"$MOUNTS"} ports=${5:-"$PORTS"} env=${6:-"$ENVS"} cmd=${7:-""} policy=${8:-"Always"}
+	local name=$1 image=$2 args=${3:-""} res=${4:-""} mounts=${5:-"$MOUNTS"} ports=${6:-"$PORTS"} env=${7:-"$ENVS"} cmd=${8:-""} policy=${9:-"Always"}
 	local lcmd="" largs=""
 	[ ! -z "$cmd" ] && lcmd=", \"command\": [\"$cmd\"]"
 	[ ! -z "$args" ] && largs=", \"args\": [ $args ]"
-	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"volumeMounts\": [ $mounts ],  $(json.label imagePullPolicy "$policy") }"
+	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"volumeMounts\": [ $mounts ], $res $(json.label imagePullPolicy "$policy") }"
 }
 json.syscontainer() {
-	local name=$1 image=$2 args=${3:-""} mounts=${4:-"$MOUNTS"} ports=${5:-"$PORTS"} env=${6:-"$ENVS"} cmd=${7:-""} policy=${8:-"Always"}
+	local name=$1 image=$2 args=${3:-""} res=${4:-""} mounts=${5:-"$MOUNTS"} ports=${6:-"$PORTS"} env=${7:-"$ENVS"} cmd=${8:-""} policy=${9:-"Always"}
 	local lcmd="" largs=""
 	[ ! -z "$cmd" ] && lcmd=", \"command\": [\"$cmd\"]"
 	[ ! -z "$args" ] && largs=", \"args\": [ $args ]"
-	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"securityContext\": {\"privileged\": true}, \"volumeMounts\": [ $mounts ],  $(json.label imagePullPolicy "$policy") }"
+	echo "{ $(json.label name "$name"), $(json.label image "$image") $lcmd $largs, \"ports\": [ $ports ], \"env\": [ $env ], \"securityContext\": {\"privileged\": true}, \"volumeMounts\": [ $mounts ], $res $(json.label imagePullPolicy "$policy") }"
 }
 container.add() {
 	CONTAINERS+=("$(json.container "$@")")
@@ -318,7 +338,6 @@ mount.add.ro() {
 
 store.cert() {
 	local name="$1" issuer="$2" cn="${3:-""}" mp="${4:-""}" sn="${5:-"${1}-tls"}" dn="${6:-"\"$cn\""}" namespace="${7:-"$NAMESPACE"}"
-	echo kube.cert "$name" "$issuer" "$cn" "$sn" "$dn" "$namespace"
 	kube.cert "$name" "$issuer" "$cn" "$sn" "$dn" "$namespace"
 	mount.add "$sn" "$mp"
 	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.secret "$sn")")
@@ -329,8 +348,8 @@ store.volatile() {
 	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.empty "$alias")")
 }
 store.map() {
-	local alias=$1 mp=$2 data=$3
-	kube.configmap "$alias" "$data" "$(json.label "run" "$CNAME")"
+	local alias=$1 mp=$2 data=$3 namespace=${4:-"$NAMESPACE"}
+	kube.configmap "$alias" "$data" "$(json.label "run" "$CNAME")" "$namespace"
 	mount.add "$alias" "$mp"
 	VOLUMES=$(sed 's/^,//' <<<"$VOLUMES,$(json.volume.config "$alias")")
 }

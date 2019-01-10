@@ -58,7 +58,7 @@ jenkins.deploy() {
 	CPREFIX=${CPREFIX:-"jenkins-"}
 	link.add 	www			80
 	store.claim	${CPREFIX}data		"/var/jenkins" "${JENKINS_CLAIM_SIZE:-"10Gi"}"
-	container.add	"${CPREFIX}jenkins" 	"${REPODOCKER}/$CNAME:latest" '"jenkins"'
+	container.add	"${CPREFIX}jenkins" 	"${REPODOCKER}/$CNAME:latest" '"jenkins"'  "$(json.res "500m" "800Mi")"
 	deploy.public
 }
 

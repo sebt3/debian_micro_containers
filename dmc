@@ -291,7 +291,7 @@ rootfs.update() {
 	}
 }
 rootfs.upgrade() {
-	ARCH=$1;shift
+	ARCH=${1:-"$ARCH"};shift
 	rootfs.mount "$ARCH" /dev
 	rootfs.mount "$ARCH" /dev/pts
 	rootfs.mount "$ARCH" /proc
@@ -661,7 +661,8 @@ install.tools() {
 
 }
 install.su() {
-	install.binaries "/bin/su"  "/usr/lib/$TARGET_SYS/libpam.so"
+	install.binaries "/bin/su"  "/lib/$TARGET_SYS/libpam.so.0"
+	ln -s "/lib/$TARGET_SYS/libpam.so.0" "$DIR_DEST/usr/lib/$TARGET_SYS/libpam.so"
 	mkdir -p "$DIR_DEST/etc/pam.d"
 	cat>"$DIR_DEST/etc/pam.d/su"<<ENDF
 auth sufficient pam_rootok.so
@@ -1046,6 +1047,7 @@ json.change() {
 }
 
 load.build() {
+	# TODO: scp du tarball puis utiliser "ADD xxx.tar.gz /" au lieu du "COPY . /"
 	cat "$IMAGEDIR/$ARCH/$TMPLT.tar.gz"| net.run "$DOCKERHOST" "docker build -t ${REPODOCKER}/${TMPLT}:latest -"
 }
 

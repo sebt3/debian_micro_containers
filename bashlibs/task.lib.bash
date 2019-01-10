@@ -143,7 +143,7 @@ task.ctrl() {
 	(
 		local n
 		for n in $(find /proc/$BASHPID/fd -type l -printf '%f\n');do
-			((n > 4)) && eval "exec $n>&-"
+			((n > 5)) && eval "exec $n>&-"
 		done
 		eval "$@"
 	)

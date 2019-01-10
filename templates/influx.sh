@@ -123,7 +123,7 @@ influx.deploy() {
 	link.add 	admin			8083
 	store.claim	"${CPREFIX}data"	"/var/lib/influxdb" "${INFLUX_CLAIM_SIZE:-"100Gi"}"
 	store.map	"${CPREFIX}config"	"/etc/influxdb" "$(json.label "influxdb.conf" "$(file.influx.conf)")"
-	container.add	"${CPREFIX}influx"	"${REPODOCKER}/$CNAME:latest" '"influx"'
+	container.add	"${CPREFIX}influx"	"${REPODOCKER}/$CNAME:latest" '"influx"' "$(json.res "300m" "600Mi")"
 	deploy.default
 }
 

@@ -112,7 +112,7 @@ telegraf.deployds() {
 	env.add		"HOST_SYS" "/rootfs/sys"
 	env.from	"HOSTNAME" "spec.nodeName"
 	env.from	"HOSTIP" "status.hostIP"
-	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"')"
+	CONTS="$(json.syscontainer "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"'  "$(json.res "100m" "50Mi")" )"
 	LABELS="$(json.label "run" "$CNAME")"
 	kube.ds "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"
 }
@@ -151,7 +151,7 @@ telegraf.deploy() {
 	CPREFIX=${CPREFIX:-"telegraf-"}
 	store.map	"${CPREFIX}config" "/etc/telegraf" "$(json.label "telegraf.conf" "$(file.deploy)")"
 	env.add		"HOSTNAME" "telegraf-service"
-	CONTS="$(json.container "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"')"
+	CONTS="$(json.container "${CPREFIX}telegraf" "${REPODOCKER}/$CNAME:latest" '"telegraf"' "$(json.res "100m" "50Mi")")"
 	LABELS="$(json.label "run" "$CNAME")"
 	kube.deploy "$CNAME" "$LABELS" "$CONTS" "$VOLUMES"
 }

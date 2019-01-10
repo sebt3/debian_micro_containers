@@ -34,7 +34,7 @@
 kapacitor.source.verify() { task.verify.permissive; }
 kapacitor.source() {
 	source.go github.com/influxdata/kapacitor
-	cd $GOPATH/src/github.com/influxdata/kapacitor
+	#cd $GOPATH/src/github.com/influxdata/kapacitor
 	#out.cmd dep ensure -vendor-only
 }
 
@@ -340,7 +340,7 @@ kapacitor.deploy() {
 	link.add	admin			9092
 	store.claim	"${CPREFIX}data"	"/var/lib/kapacitor" "${KAPACITOR_CLAIM_SIZE:-"10Gi"}"
 	store.map	"${CPREFIX}config"	"/etc/kapacitor" "$(json.label "kapacitor.conf" "$(file.kapacitor.conf)")"
-	container.add	"${CPREFIX}kapacitor"	"${REPODOCKER}/$CNAME:latest" '"kapacitor"'
+	container.add	"${CPREFIX}kapacitor"	"${REPODOCKER}/$CNAME:latest" '"kapacitor"' "$(json.res "200m" "100Mi")"
 	deploy.default
 }
 

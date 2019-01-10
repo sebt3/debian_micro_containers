@@ -71,7 +71,7 @@ chronograf.deploy() {
 	CPREFIX=${CPREFIX:-"chronograf-"}
 	link.add 	www			80
 	store.claim	${CPREFIX}data		"/var/run/chronograf" "10Gi"
-	container.add	"${CPREFIX}${CNAME}"	"${REPODOCKER}/$CNAME:latest" '"chronograf"'
+	container.add	"${CPREFIX}${CNAME}"	"${REPODOCKER}/$CNAME:latest" '"chronograf"' "$(json.res "100m" "50Mi")"
 	deploy.public
 }
 

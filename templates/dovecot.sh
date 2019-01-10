@@ -84,7 +84,9 @@ ENDF
   idmap gid = 10000-20000
   password server = samba
   encrypt passwords = yes
-  use kerberos keytab = true
+  kerberos method = system keytab
+  winbind enum users = yes
+  winbind enum groups = yes
   winbind use default domain = yes
   winbind offline logon = false
   winbind separator = +
@@ -167,10 +169,10 @@ ENDF
 	cat >"$DIR_DEST/etc/dovecot/conf.d/10-auth.conf" <<ENDF
 auth_use_winbind		= yes
 auth_winbind_helper_path	= /usr/bin/ntlm_auth
-auth_mechanisms			= plain ntlm gss-spnego login
+#auth_mechanisms			= plain login gss-spnego ntlm
+auth_mechanisms			= plain login cram-md5
 auth_username_format		= %Lu
-# TODO: supprimer la ligne suivante
-disable_plaintext_auth		= no
+disable_plaintext_auth		= yes
 passdb {
   driver			= ldap
   args				= /etc/container/dovecot-ldap.conf
@@ -208,6 +210,18 @@ namespace inbox {
   }
 }
 ENDF
+	cat >"$DIR_DEST/etc/dovecot/conf.d/20-lmtp.conf" <<ENDF
+protocol lmtp {
+  postmaster_address = postmaster@home.local
+  mail_plugins = sieve
+}
+
+plugin {
+  sieve_before = /home/vmail/sieve/spam-global.sieve
+  sieve = /home/vmail/%Lu/dovecot.sieve
+  sieve_dir = /home/vmail/%Lu/sieve
+}
+ENDF
 	cat >"$DIR_DEST/etc/dovecot/dovecot.conf" <<ENDF
 !include_try /usr/share/dovecot/protocols.d/*.protocol
 dict {
@@ -218,8 +232,14 @@ log_path = /var/log/mail.log
 ENDF
 	cat >"$DIR_DEST/start.d/dovecot" <<ENDF
 hostname imap.home.local
-mkdir -p /home/vmail
-chown 501:501 /home/vmail
+mkdir -p /home/vmail/sieve
+if [ ! -e /home/vmail/sieve/spam-global.sieve ];then
+	echo 'require "fileinto";'>/home/vmail/sieve/spam-global.sieve
+	echo 'if header :contains "X-Spam-Flag" "YES" {'>>/home/vmail/sieve/spam-global.sieve
+	echo '  fileinto "Spam";'>>/home/vmail/sieve/spam-global.sieve
+	echo '}'>>/home/vmail/sieve/spam-global.sieve
+fi
+chown -R 501:501 /home/vmail
 touch /var/log/mail.log
 tail -f /var/log/mail.log &
 exec /usr/sbin/dovecot -F
@@ -257,7 +277,9 @@ dovecot.conf.smb() {
   idmap gid = 10000-20000
   password server = samba
   encrypt passwords = yes
-  use kerberos keytab = true
+  kerberos method = system keytab
+  winbind enum users = yes
+  winbind enum groups = yes
   winbind use default domain = yes
   winbind offline logon = false
   winbind separator = +
@@ -290,7 +312,7 @@ dovecot.deploy() {
 	store.claim	"${CPREFIX}data"	"/home/vmail" "${DOVECOT_CLAIM_SIZE:-"50Gi"}"
 	store.map	"${CPREFIX}config"	"/etc/container" "$(json.label "krb5.conf" "$(dovecot.conf.kb5)"),$(json.label "smb.conf" "$(dovecot.conf.smb)"),$(json.label "dovecot-ldap.conf" "$(dovecot.conf.ldap)")"
 	store.cert	"dovecot"		"ca-issuer" "imap.home.local" "/etc/dovecot/ssl"
-	container.add.sys "${CPREFIX}dovecot"	"${REPODOCKER}/$CNAME:latest" '"dovecot"'
+	container.add.sys "${CPREFIX}dovecot"	"${REPODOCKER}/$CNAME:latest" '"dovecot"' "$(json.res "050m" "30Mi")"
 	deploy.public
 }
 

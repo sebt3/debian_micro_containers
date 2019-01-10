@@ -88,7 +88,6 @@ metadata:
   namespace: "cert-manager"
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 ---
@@ -100,7 +99,6 @@ metadata:
     "helm.sh/hook": crd-install
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 spec:
@@ -122,7 +120,6 @@ metadata:
     "helm.sh/hook": crd-install
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 spec:
@@ -141,7 +138,6 @@ metadata:
     "helm.sh/hook": crd-install
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 spec:
@@ -160,7 +156,6 @@ metadata:
     "helm.sh/hook": crd-install
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 spec:
@@ -179,7 +174,6 @@ metadata:
     "helm.sh/hook": crd-install
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 spec:
@@ -196,7 +190,6 @@ metadata:
   name: cert-manager
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 rules:
@@ -216,7 +209,6 @@ metadata:
   name: cert-manager
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
 roleRef:
@@ -234,7 +226,6 @@ metadata:
   name: cert-manager-view
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
     rbac.authorization.k8s.io/aggregate-to-view: "true"
@@ -251,7 +242,6 @@ metadata:
   name: cert-manager-edit
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.2
     release: cert-manager
     heritage: Tiller
     rbac.authorization.k8s.io/aggregate-to-edit: "true"
@@ -268,7 +258,6 @@ metadata:
   namespace: "cert-manager"
   labels:
     app: cert-manager
-    chart: cert-manager-v0.6.0-dev.1
     release: cert-manager
     heritage: Tiller
 spec:
@@ -296,6 +285,10 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
 ENDKUBE
 }
 

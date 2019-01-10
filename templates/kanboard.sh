@@ -100,7 +100,7 @@ kanboard.deploy() {
 	CPREFIX=${CPREFIX:-"kanboard-"}
 	link.add	www			80
 	store.claim.many ${CPREFIX}data 	"/var/htdocs/data" "${KANBOARD_CLAIM_SIZE:-"10Gi"}"
-	container.add	"${CPREFIX}$CNAME"	"${REPODOCKER}/$CNAME:latest"  '"kanboard"'
+	container.add	"${CPREFIX}$CNAME"	"${REPODOCKER}/$CNAME:latest"  '"kanboard"' "$(json.res "100m" "100Mi")"
 	deploy.public
 }
 
@@ -116,12 +116,9 @@ step.add.deploy  kanboard.deploy	"Deploy kanboard to kubernetes"
 if false;then
 
 su - postgres <<END
-/usr/lib/postgresql/10/bin/createuser kanboard
-/usr/lib/postgresql/10/bin/createdb kanboard
-echo "alter user kanboard with encrypted password 'kanboard';"|/usr/lib/postgresql/10/bin/psql
-echo "grant all privileges on database kanboard to kanboard;"|/usr/lib/postgresql/10/bin/psql
-echo "host all all 0.0.0.0/0 md5">>/var/lib/postgresql/data/pg_hba.conf
-echo "host all all ::/0 md5">>/var/lib/postgresql/data/pg_hba.conf
-echo "SELECT pg_reload_conf();"|/usr/lib/postgresql/10/bin/psql
+createuser kanboard
+createdb kanboard
+echo "alter user kanboard with encrypted password 'kanboard';"|psql
+echo "grant all privileges on database kanboard to kanboard;"|psql
 END
 fi
