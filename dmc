@@ -537,7 +537,7 @@ configure.cmake() {
 	CMAKE_PREFIX_PATH="$ROOTDIR/$ARCH/usr/lib/$TARGET_SYS/cmake" cmake -DCMAKE_TOOLCHAIN_FILE="$ROOTDIR/$ARCH/toolchain.cmake" "$DIR_SOURCE/$p" $@
 }
 build.make() {
-	cd "$DIR_BUILD/$1";out.cmd make -j 4
+	cd "$DIR_BUILD/$1";shift;out.cmd make -j 4 "$@"
 }
 build.go() {
 	cd "$GOPATH/src/$1"
